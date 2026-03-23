@@ -1,0 +1,20 @@
+## .NET 核心过滤
+[Bb]in/
+[Oo]bj/
+[Rr]elease/
+[Dd]ebug/
+
+## IDE 过滤
+.vs/
+.vscode/
+*.user
+*.suo
+
+## 依赖过滤
+packages/
+node_modules/
+
+## 即使现在没有，也建议加上以防万一
+.svn/
+.DS_Store
+Thumbs.db
