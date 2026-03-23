@@ -1,0 +1,1374 @@
+{
+  "info": {
+    "_postman_id": "16c6743d-6772-45fd-8efb-5a8475726354",
+    "name": "DT_DataAcquisitionSystem",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "40791155"
+  },
+  "item": [
+    {
+      "name": "文件数采接口集合",
+      "item": [
+        {
+          "name": "配置相关",
+          "item": [
+            {
+              "name": "获取所有启用配置",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "获取所有启用配置Ids",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs?taskIds=1,2",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs"
+                  ],
+                  "query": [
+                    {
+                      "key": "ids",
+                      "value": "1,2,3",
+                      "disabled": true
+                    },
+                    {
+                      "key": "groupIds",
+                      "value": "3",
+                      "disabled": true
+                    },
+                    {
+                      "key": "ids",
+                      "value": "14",
+                      "disabled": true
+                    },
+                    {
+                      "key": "ids",
+                      "value": "2",
+                      "disabled": true
+                    },
+                    {
+                      "key": "taskIds",
+                      "value": "1,2",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "获取单个id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/12",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "12"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "设置配置启动状态",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "ids",
+                      "value": "1",
+                      "type": "text",
+                      "uuid": "45431b7b-5393-4f42-9a33-ba89f6710ddd"
+                    },
+                    {
+                      "key": "isEnabled",
+                      "value": "true",
+                      "type": "text",
+                      "uuid": "045e0d95-d586-438b-9803-bae0cd578f43"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/status",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "status"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "获取配置启动状态",
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              },
+              "request": {
+                "method": "GET",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "id",
+                      "value": "1",
+                      "type": "text",
+                      "uuid": "45431b7b-5393-4f42-9a33-ba89f6710ddd"
+                    },
+                    {
+                      "key": "isEnabled",
+                      "value": "true",
+                      "type": "text",
+                      "uuid": "045e0d95-d586-438b-9803-bae0cd578f43"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/status?ids=1",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "status"
+                  ],
+                  "query": [
+                    {
+                      "key": "ids",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "创建配置",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"EqName\": \"REST_Test_Device_6\",\r\n    \"TableName\": \"Target_Data_Table\",\r\n    \"FilePathPattern\": \"D:/Desktop/{yyyy}.{MM}.{dd}/\",\r\n    \"FileNamePattern\": \"\",\r\n    \"FileType\": \"csv\",\r\n    \"HeaderRow\": 1,\r\n    \"StartRow\": 2,\r\n    \"IsEnabled\": 1,\r\n    \"FieldMappings\": \"{\\\"环境温度\\\": \\\"Temperature\\\", \\\"环境湿度\\\": \\\"Humidity\\\"}\",\r\n    \"PostProcessingType\": 0,\r\n    \"ProcedureName\": \"\",\r\n    \"ExtFields\": \"row, fullFilePath\"\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    ""
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "更新配置",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "PUT",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"EqName\": \"REST_Test_Device_2\",\r\n    \"TableName\": \"Target_Data_Table\",\r\n    \"FilePathPattern\": \"D:/Data/{yyyy}/\",\r\n    \"FileNamePattern\": \"Log.csv\",\r\n    \"FileType\": \"csv\",\r\n    \"HeaderRow\": 1,\r\n    \"StartRow\": 2,\r\n    \"IsEnabled\": 1,\r\n    \"FieldMappings\": \"[]\",\r\n    \"PostProcessingType\": 2,\r\n    \"ProcedureName\": \"\",\r\n    \"ServiceName\": \"ProcessETFailureInformation\"\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/9",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "9"
+                  ]
+                }
+              },
+              "response": []
+            }
+          ],
+          "description": "Config"
+        },
+        {
+          "name": "配置组相关",
+          "item": [
+            {
+              "name": "获取所有配置组",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/group",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "group"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "获取配置组单个id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/group/3",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "group",
+                    "3"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "创建配置组",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"GroupName\": \"组测试\",\r\n    \"GroupCategory\": \"二厂\",\r\n    \"GroupType\": \"默认周期执行组\",\r\n    \"SortOrder\": 1,\r\n    \"IsEnabled\": true\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/group",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "group"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "更新配置组",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "PUT",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"GroupName\": \"组测试\",\r\n    \"GroupCategory\": \"二厂\",\r\n    \"GroupType\": \"默认周期执行组\",\r\n    \"SortOrder\": 1,\r\n    \"IsEnabled\": true\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/group/3",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "group",
+                    "3"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "设置配置启动状态",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "ids",
+                      "value": "1",
+                      "type": "text",
+                      "uuid": "45431b7b-5393-4f42-9a33-ba89f6710ddd"
+                    },
+                    {
+                      "key": "isEnabled",
+                      "value": "true",
+                      "type": "text",
+                      "uuid": "045e0d95-d586-438b-9803-bae0cd578f43"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/group/status/",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "group",
+                    "status",
+                    ""
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "获取配置启动状态",
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              },
+              "request": {
+                "method": "GET",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "id",
+                      "value": "1",
+                      "type": "text",
+                      "uuid": "45431b7b-5393-4f42-9a33-ba89f6710ddd"
+                    },
+                    {
+                      "key": "isEnabled",
+                      "value": "true",
+                      "type": "text",
+                      "uuid": "045e0d95-d586-438b-9803-bae0cd578f43"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/group/status/?ids=1",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "group",
+                    "status",
+                    ""
+                  ],
+                  "query": [
+                    {
+                      "key": "ids",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "批量建立关联",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/group/3/configs?ids=11",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "group",
+                    "3",
+                    "configs"
+                  ],
+                  "query": [
+                    {
+                      "key": "ids",
+                      "value": "11"
+                    },
+                    {
+                      "key": "ids",
+                      "value": "12",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "删除配置关联",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/file-configs/group/3/configs?ids=7",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "file-configs",
+                    "group",
+                    "3",
+                    "configs"
+                  ],
+                  "query": [
+                    {
+                      "key": "ids",
+                      "value": "1",
+                      "disabled": true
+                    },
+                    {
+                      "key": "ids",
+                      "value": "2",
+                      "disabled": true
+                    },
+                    {
+                      "key": "ids",
+                      "value": "3",
+                      "disabled": true
+                    },
+                    {
+                      "key": "ids",
+                      "value": "5",
+                      "disabled": true
+                    },
+                    {
+                      "key": "ids",
+                      "value": "7",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "任务组相关",
+          "item": [
+            {
+              "name": "获取所有任务组",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/tasks",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "tasks"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "获取指定 ID 的任务对象",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/tasks/2",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "tasks",
+                    "2"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "创建新任务",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"TaskName\": \"环境数据采集任务\",\r\n    \"TaskMode\": 1,\r\n    \"CronExpression\": \"0 0/10 * * * ?\",\r\n    \"IsEnabled\": 1,\r\n    \"Description\": \"每10分钟采集一次温湿度\"\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/tasks",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "tasks"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "更新配置组",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "PUT",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"TaskName\": \"环境数据采集任务-已更名\",\r\n    \"TaskMode\": 1,\r\n    \"IsEnabled\": 0,\r\n    \"Description\": \"暂时禁用该任务进行维护\"\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/tasks/2",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "tasks",
+                    "2"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "批量删除任务",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/tasks?ids=1,2,3",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "tasks"
+                  ],
+                  "query": [
+                    {
+                      "key": "ids",
+                      "value": "1,2,3"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "批量切换启用状态",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "ids",
+                      "value": "1",
+                      "type": "text",
+                      "uuid": "45431b7b-5393-4f42-9a33-ba89f6710ddd"
+                    },
+                    {
+                      "key": "isEnabled",
+                      "value": "true",
+                      "type": "text",
+                      "uuid": "045e0d95-d586-438b-9803-bae0cd578f43"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/tasks/status?ids=1,2&isEnabled=true",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "tasks",
+                    "status"
+                  ],
+                  "query": [
+                    {
+                      "key": "ids",
+                      "value": "1,2"
+                    },
+                    {
+                      "key": "isEnabled",
+                      "value": "true"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "获取任务已关联的配置组 ID",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/tasks/1/groups",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "tasks",
+                    "1",
+                    "groups"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "重新分配任务关联的组",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/tasks/1/groups?ids=10,11",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "tasks",
+                    "1",
+                    "groups"
+                  ],
+                  "query": [
+                    {
+                      "key": "ids",
+                      "value": "12",
+                      "disabled": true
+                    },
+                    {
+                      "key": "ids",
+                      "value": "10,11"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "按模式查询任务 (如定时/循环)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/tasks/mode/1",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "tasks",
+                    "mode",
+                    "1"
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "sql数据库操作",
+          "item": [
+            {
+              "name": "批量导入",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n  \"TableName\": \"User_Data\",\r\n  \"Data\": [\r\n    {\r\n      \"UserName\": \"张三\",\r\n      \"Email\": \"zhangsan@example.com\",\r\n      \"Age\": 28,\r\n      \"Score\": 95.5,\r\n      \"UserGuid\": \"550e8400-e29b-41d4-a716-446655440000\",\r\n      \"IsActive\": true,\r\n      \"CreateTime\": \"2026-03-10 10:00:00\"\r\n    },\r\n    {\r\n      \"UserName\": \"李四\",\r\n      \"Email\": \"lisi@example.com\",\r\n      \"Age\": 32,\r\n      \"Score\": 88.0,\r\n      \"UserGuid\": \"660f9511-f30c-52e5-b827-557766551111\",\r\n      \"IsActive\": false,\r\n      \"CreateTime\": \"2026-03-10 11:30:00\"\r\n    },\r\n    {\r\n      \"UserName\": \"王五\",\r\n      \"Email\": null,\r\n      \"Age\": null,\r\n      \"Score\": 0.0,\r\n      \"UserGuid\": null,\r\n      \"IsActive\": true,\r\n      \"CreateTime\": \"2026-03-10 12:00:00\"\r\n    }\r\n  ],\r\n  \"Flag\": \"\",\r\n  \"PostProcessSproc\": null\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/bulk-import",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "bulk-import"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "执行存储过程",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": ""
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/execute-post-process?sproc=[UpdateUserGrades]",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "execute-post-process"
+                  ],
+                  "query": [
+                    {
+                      "key": "sproc",
+                      "value": "[UpdateUserGrades]"
+                    },
+                    {
+                      "key": "flag",
+                      "value": null,
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "采集日志相关",
+          "item": [
+            {
+              "name": "获取传续起始行",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/next-row/1",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "next-row",
+                    "1"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "记录采集日志",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"TaskLogId\": \"1b341e95-6d17-4239-b065-b1f16382814a\",\r\n    \"ConfigId\": 1,\r\n    \"FileName\": \"20260312_ProductionData.csv\",\r\n    \"StartRow\": 0,\r\n    \"ProcessedRows\": 500,\r\n    \"StartTime\": \"2026-03-12T09:00:00\",\r\n    \"EndTime\": \"2026-03-12T09:05:30\",\r\n    \"Status\": \"Success\",\r\n    \"ErrorMessage\": null\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/log",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "log"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "记录采集任务日志",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"TaskId\": 1,\r\n    \"StartTime\": \"2026-03-12T09:00:00\",\r\n    \"EndTime\": null,\r\n    \"Status\": \"Running\",\r\n    \"TotalConfigs\": 5,\r\n    \"SuccessCount\": 0\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/task-log",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "task-log"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "更新任务采集日志状态",
+              "request": {
+                "method": "PUT",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"Status\": \"Completed\",\r\n    \"SuccessCount\": 5\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/task-log/1B341E95-6D17-4239-B065-B1F16382814A",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "task-log",
+                    "1B341E95-6D17-4239-B065-B1F16382814A"
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "文件路径相关",
+          "item": [
+            {
+              "name": "获取文件夹下文件",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/files/list?path=ftp://10.6.9.22/B14/2026-3/&pattern=*.csv&pass=dt123456%23&user=et1",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "files",
+                    "list"
+                  ],
+                  "query": [
+                    {
+                      "key": "path",
+                      "value": "ftp://10.6.9.22/B14/2026-3/"
+                    },
+                    {
+                      "key": "pattern",
+                      "value": "*.csv"
+                    },
+                    {
+                      "key": "pass",
+                      "value": "dt123456%23"
+                    },
+                    {
+                      "key": "user",
+                      "value": "et1"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "获取文件夹下文件",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [],
+                    "url": {
+                      "raw": "http://localhost:31173/api/files/list?path=D:\\Desktop\\2026-03-00&pattern=*.pptx",
+                      "protocol": "http",
+                      "host": [
+                        "localhost"
+                      ],
+                      "port": "31173",
+                      "path": [
+                        "api",
+                        "files",
+                        "list"
+                      ],
+                      "query": [
+                        {
+                          "key": "path",
+                          "value": "D:\\Desktop\\2026-03-00"
+                        },
+                        {
+                          "key": "pattern",
+                          "value": "*.pptx"
+                        }
+                      ]
+                    }
+                  },
+                  "_postman_previewlanguage": null,
+                  "header": null,
+                  "cookie": [],
+                  "body": null
+                },
+                {
+                  "name": "获取文件夹下文件ftp",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [],
+                    "url": {
+                      "raw": "http://localhost:31173/api/files/list?path=ftp://10.6.9.22/B10/&pattern=*.md5&user=et1&pass=dt123456%23",
+                      "protocol": "http",
+                      "host": [
+                        "localhost"
+                      ],
+                      "port": "31173",
+                      "path": [
+                        "api",
+                        "files",
+                        "list"
+                      ],
+                      "query": [
+                        {
+                          "key": "path",
+                          "value": "ftp://10.6.9.22/B10/"
+                        },
+                        {
+                          "key": "pattern",
+                          "value": "*.md5"
+                        },
+                        {
+                          "key": "user",
+                          "value": "et1"
+                        },
+                        {
+                          "key": "pass",
+                          "value": "dt123456%23"
+                        }
+                      ]
+                    }
+                  },
+                  "_postman_previewlanguage": null,
+                  "header": null,
+                  "cookie": [],
+                  "body": null
+                }
+              ]
+            },
+            {
+              "name": "判断路径文件是否存在",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/files/exists?path=C:\\Users\\953818\\Documents\\WXWork\\1688855018797659\\Cache\\File\\2026-03\\2月开发功能-0303.xlsx",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "files",
+                    "exists"
+                  ],
+                  "query": [
+                    {
+                      "key": "path",
+                      "value": "C:\\Users\\953818\\Documents\\WXWork\\1688855018797659\\Cache\\File\\2026-03\\2月开发功能-0303.xlsx"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "获取解析路径文件数据",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/files/preview?path=D:\\Desktop\\028270033_unknown_2021-10-30.csv&top=10",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "files",
+                    "preview"
+                  ],
+                  "query": [
+                    {
+                      "key": "path",
+                      "value": "D:\\Desktop\\028270033_unknown_2021-10-30.csv"
+                    },
+                    {
+                      "key": "top",
+                      "value": "10"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "采集任务相关",
+          "item": [
+            {
+              "name": "单次采集",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/execute-by-id/11?processDate=2026.03.13",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "execute-by-id",
+                    "11"
+                  ],
+                  "query": [
+                    {
+                      "key": "processDate",
+                      "value": "2026.03.13"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "单次采集手动（带日志）",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/execute-manual/11?processDate=2026.03.14",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "execute-manual",
+                    "11"
+                  ],
+                  "query": [
+                    {
+                      "key": "processDate",
+                      "value": "2026.03.14"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "单次配置组采集手动（带日志）",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/execute-by-groups?groupIds=3&processDate=2026.3.15",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "execute-by-groups"
+                  ],
+                  "query": [
+                    {
+                      "key": "groupIds",
+                      "value": "3"
+                    },
+                    {
+                      "key": "processDate",
+                      "value": "2026.3.15"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "单次配置时间段采集手动（带日志）",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition/execute-by-range/11?startDate=2026.03.16&endDate=2026.03.17",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "execute-by-range",
+                    "11"
+                  ],
+                  "query": [
+                    {
+                      "key": "startDate",
+                      "value": "2026.03.16"
+                    },
+                    {
+                      "key": "endDate",
+                      "value": "2026.03.17"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "多配置时间段采集手动（带日志）",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "http://localhost:31173/api/data-acquisition//execute-configs-range?startDate=2026.03.01&endDate=2026.03.01&ids=14",
+                  "protocol": "http",
+                  "host": [
+                    "localhost"
+                  ],
+                  "port": "31173",
+                  "path": [
+                    "api",
+                    "data-acquisition",
+                    "",
+                    "execute-configs-range"
+                  ],
+                  "query": [
+                    {
+                      "key": "startDate",
+                      "value": "2026.03.01"
+                    },
+                    {
+                      "key": "endDate",
+                      "value": "2026.03.01"
+                    },
+                    {
+                      "key": "ids",
+                      "value": "14"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
