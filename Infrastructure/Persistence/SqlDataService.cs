@@ -5,6 +5,7 @@ using System.Data;
 using System.Data.SqlClient;
 using System.Threading;
 using System.Threading.Tasks;
+using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using Microsoft.Practices.Unity;
 
@@ -195,6 +196,50 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Persistence
             }
         }
 
+        /// <summary>
+        /// 检查表是否存在，如果不存在则根据指定的列定义自动创建表。
+        /// </summary>
+        /// <param name="tableName">表名</param>
+        /// <param name="columns">列定义集合</param>
+        public async Task CreateTableIfNotExistsAsync(string tableName, IEnumerable<ColumnDefinition> columns, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(tableName)) throw new ArgumentNullException(nameof(tableName));
+            if (columns == null) throw new ArgumentNullException(nameof(columns));
+
+            // 1. 检查表是否存在的 SQL 头
+            var sqlBuilder = new System.Text.StringBuilder();
+            sqlBuilder.AppendLine($"IF OBJECT_ID('[{tableName}]', 'U') IS NULL");
+            sqlBuilder.AppendLine("BEGIN");
+            sqlBuilder.AppendLine($"    CREATE TABLE [{tableName}] (");
+
+            // 2. 拼接列
+            var columnSqls = new List<string>();
+            foreach (var col in columns)
+            {
+                string sqlType = GetSqlDataType(col.DataType, col.MaxLength);
+                string nullConstraint = col.AllowNull ? "NULL" : "NOT NULL";
+                string pkConstraint = col.IsPrimaryKey ? "PRIMARY KEY IDENTITY(1,1)" : ""; // 假设主键是自增的，根据需要调整
+
+                columnSqls.Add($"        [{col.ColumnName}] {sqlType} {pkConstraint} {nullConstraint}");
+            }
+
+            sqlBuilder.AppendLine(string.Join(", \n", columnSqls));
+            sqlBuilder.AppendLine("    )");
+            sqlBuilder.AppendLine("END");
+
+            string finalSql = sqlBuilder.ToString();
+
+            // 3. 执行建表脚本
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                using (var cmd = new SqlCommand(finalSql, conn))
+                {
+                    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+            }
+        }
+
         #region 辅助方法
 
         // 默认值生成逻辑
@@ -208,6 +253,35 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Persistence
             return DBNull.Value;
         }
 
+        /// <summary>
+        /// 将 C# 类型映射为 SQL Server 数据类型
+        /// </summary>
+        private string GetSqlDataType(Type type, int? maxLength = null)
+        {
+            // 如果是 Nullable<T>，获取底层类型
+            Type underlyingType = Nullable.GetUnderlyingType(type) ?? type;
+
+            if (underlyingType == typeof(int)) return "INT";
+            if (underlyingType == typeof(long)) return "BIGINT";
+            if (underlyingType == typeof(short)) return "SMALLINT";
+            if (underlyingType == typeof(byte)) return "TINYINT";
+            if (underlyingType == typeof(decimal)) return "DECIMAL(18, 4)";
+            if (underlyingType == typeof(double)) return "FLOAT";
+            if (underlyingType == typeof(float)) return "REAL";
+            if (underlyingType == typeof(bool)) return "BIT";
+            if (underlyingType == typeof(DateTime)) return "DATETIME2";
+            if (underlyingType == typeof(Guid)) return "UNIQUEIDENTIFIER";
+
+            if (underlyingType == typeof(string))
+            {
+                if (maxLength.HasValue && maxLength.Value > 0 && maxLength.Value <= 8000)
+                    return $"NVARCHAR({maxLength.Value})";
+                return "NVARCHAR(MAX)";
+            }
+
+            // 默认回退类型
+            return "NVARCHAR(MAX)";
+        }
         #endregion
     }
 }
