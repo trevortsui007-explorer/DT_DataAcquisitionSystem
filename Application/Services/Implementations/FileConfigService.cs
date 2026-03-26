@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
-using DT_DataAcquisitionSystem.Application.Services;
+using DT_DataAcquisitionSystem.Common.Extensions;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
@@ -20,6 +20,25 @@ namespace DT_DataAcquisitionSystem.Application.Services
         }
 
         #region Config 查询操作 (Read)
+
+        /// <summary>
+        /// 统一入口：根据 Options 路由到不同的查询逻辑
+        /// </summary>
+        public NancyModuleExtensions.PageResult<AcquisitionConfig> GetFileConfigsPaged(FileConfigQueryOptions options, int page, int limit)
+        {
+            options = options ?? new FileConfigQueryOptions();
+            string tableName = string.IsNullOrEmpty(options.TableName) ? DefaultConfigTable : options.TableName;
+            string dbName = string.IsNullOrEmpty(options.DatabaseName) ? DefaultDb : options.DatabaseName;
+
+            // 调用刚刚在 Repository 写的元组返回方法
+            var result = _repository.GetPageList(options, page, limit, tableName, dbName);
+
+            return new NancyModuleExtensions.PageResult<AcquisitionConfig>
+            {
+                Total = result.Total,
+                List = result.List
+            };
+        }
 
         /// <summary>
         /// 统一入口：根据 Options 路由到不同的查询逻辑

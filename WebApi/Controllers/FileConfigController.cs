@@ -30,15 +30,17 @@ namespace Learun.Application.WebApi.Modules
         }
 
         #region 1. 基础 CRUD 接口
-
         /// <summary>
         /// 获取配置列表
         /// </summary>
+        /// <summary>
+        /// 获取配置（支持分页或全量）
+        /// </summary>
         private Response GetConfigList(dynamic _)
         {
-            // dynamic 参数下，显式通过类名调用扩展方法最稳妥
             var ctx = NancyModuleExtensions.GetQueryContext(this);
 
+            // 1. 统一构建查询条件
             var options = new FileConfigQueryOptions
             {
                 TableName = ctx.TableName,
@@ -48,8 +50,28 @@ namespace Learun.Application.WebApi.Modules
                 Ids = this.GetQueryArray("ids")
             };
 
-            var data = _fileConfigService.GetFileConfigs(options);
-            return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "查询成功", data);
+            // 2. 检查是否显式要求“全量数据”
+            // 比如前端传了 ?all=true 或者判断 Query 字典里是否包含 limit 键
+            bool isAll = this.Request.Query["all"].HasValue && (bool)this.Request.Query["all"];
+
+            if (isAll)
+            {
+                var data = _fileConfigService.GetFileConfigs(options);
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "查询成功", data);
+            }
+
+            // 3. 默认走分页逻辑（使用你提供的扩展方法获取默认值）
+            int page = this.GetPage();
+            int limit = this.GetLimit();
+
+            var pagedData = _fileConfigService.GetFileConfigsPaged(options, page, limit);
+
+            return this.ToPageResponse(
+                NancyModuleExtensions.ResponseCode.success,
+                "查询成功",
+                pagedData.Total,
+                pagedData.List
+            );
         }
 
         /// <summary>

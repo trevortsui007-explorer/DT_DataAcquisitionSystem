@@ -9,6 +9,11 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
     public interface IFileConfigRepository : IRepository
     {
         /// <summary>
+        /// 获取全部配置分页数据
+        /// </summary>
+        (int Total, IEnumerable<AcquisitionConfig> List) GetPageList(FileConfigQueryOptions options, int page, int limit, string tableName = null, string databaseName = null);
+
+        /// <summary>
         /// 获取全部配置
         /// </summary>
         /// <returns></returns>
