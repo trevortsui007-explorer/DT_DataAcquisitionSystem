@@ -1,11 +1,16 @@
 ﻿using System.Collections.Generic;
 using DT_DataAcquisitionSystem.Domain.Entities;
+using DT_DataAcquisitionSystem.Common.Extensions;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
     public interface IFileConfigService
     {
         #region 查询操作 (Read)
+        /// <summary>
+        /// 根据组合条件（如机台名、表名、启用状态）获取文件采集配置分页列表
+        /// </summary>
+        NancyModuleExtensions.PageResult<AcquisitionConfig> GetFileConfigsPaged(FileConfigQueryOptions options, int page, int limit);
 
         /// <summary>
         /// 根据组合条件（如机台名、表名、启用状态）获取文件采集配置列表

@@ -1,6 +1,7 @@
 ﻿using Nancy;
 using Nancy.ModelBinding;
 using System;
+using System.Collections.Generic;
 
 namespace DT_DataAcquisitionSystem.Common.Extensions
 {
@@ -11,6 +12,12 @@ namespace DT_DataAcquisitionSystem.Common.Extensions
         {
             public string TableName { get; set; }
             public string DatabaseName { get; set; }
+        }
+
+        public class PageResult<T>
+        {
+            public int Total { get; set; }
+            public IEnumerable<T> List { get; set; }
         }
 
         public enum ResponseCode
@@ -61,5 +68,21 @@ namespace DT_DataAcquisitionSystem.Common.Extensions
         {
             return module.Response.AsJson(new { code = (int)code, info, data });
         }
+
+        public static Response ToPageResponse(this NancyModule module, ResponseCode code, string info, int total, object data)
+        {
+            // 构造符合前端分页要求的匿名对象
+            return module.Response.AsJson(new
+            {
+                code = (int)code,
+                info = info,
+                count = total, // 直接在这里返回 count 字段，方便前端直接读取
+                data = data
+            });
+        }
+
+        // 3. 辅助方法：获取分页参数
+        public static int GetPage(this NancyModule module) => int.TryParse(module.GetParam("page"), out var p) ? p : 1;
+        public static int GetLimit(this NancyModule module) => int.TryParse(module.GetParam("limit"), out var l) ? l : 10;
     }
 }

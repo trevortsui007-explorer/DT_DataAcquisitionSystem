@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using Dapper;
 using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using Learun.DataBase.Repository;
@@ -14,6 +15,44 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
         private const string DefaultGroupLinkTable = "DA_AcquisitionGroup_Config";
 
         #region Config Query
+        public (int Total, IEnumerable<AcquisitionConfig> List) GetPageList(
+            FileConfigQueryOptions options,
+            int page,
+            int limit,
+            string tableName = DefaultConfigTable,
+            string databaseName = DefaultDb)
+        {
+            var db = databaseName ?? DefaultDb;
+            var table = tableName ?? DefaultConfigTable;
+
+            // 1. 构建基础 WHERE 条件
+            string whereSql = " WHERE 1=1 ";
+            var parameters = new DynamicParameters();
+
+            if (options.Ids != null && options.Ids.Any())
+            {
+                whereSql += " AND [Id] IN @Ids ";
+                parameters.Add("Ids", options.Ids);
+            }
+
+            // 2. 查询总数
+            string countSql = $"SELECT COUNT(1) FROM [{table}] {whereSql}";
+            int total = (int)this.BaseRepository(db).FindObject(countSql, parameters);
+
+            // 3. 查询分页数据
+            string dataSql = $@"
+                SELECT * FROM [{table}] 
+                {whereSql} 
+                ORDER BY [Id] DESC 
+                OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY";
+
+            parameters.Add("Skip", (page - 1) * limit);
+            parameters.Add("Take", limit);
+
+            var list = this.BaseRepository(db).FindList<AcquisitionConfig>(dataSql, parameters);
+
+            return (total, list);
+        }
 
         public IEnumerable<AcquisitionConfig> GetList(string tableName = DefaultConfigTable, string databaseName = DefaultDb)
         {
