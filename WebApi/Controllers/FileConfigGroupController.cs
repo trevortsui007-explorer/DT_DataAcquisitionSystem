@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 using Newtonsoft.Json;
+using DT_DataAcquisitionSystem.Application.DTOs;
 
 namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Controllers
 {
@@ -61,7 +62,8 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
         private Response GetConfigGroupList(dynamic _)
         {
             var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionGroup");
-            var data = _fileConfigGroupService.GetList(ctx.TableName, ctx.DatabaseName);
+            var linkTableName = this.GetParam("LinkTableName");
+            var data = _fileConfigGroupService.GetList(ctx.TableName, linkTableName, ctx.DatabaseName);
             return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "查询成功", data);
         }
 
