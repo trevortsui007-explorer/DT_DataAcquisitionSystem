@@ -1,4 +1,5 @@
 ﻿using DT_DataAcquisitionSystem.Domain.Entities;
+using DT_DataAcquisitionSystem.Application.DTOs;
 using System.Collections.Generic;
 
 namespace DT_DataAcquisitionSystem.Domain.Interfaces
@@ -10,7 +11,7 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
         /// 获取全部配置
         /// </summary>
         /// <returns></returns>
-        IEnumerable<AcquisitionGroup> GetList(string tableName, string databaseName);
+        IEnumerable<AcquisitionGroupDto> GetList(string tableName = null, string linkTableName = null, string databaseName = null);
 
         /// <summary>
         /// 根据Ids获取配置

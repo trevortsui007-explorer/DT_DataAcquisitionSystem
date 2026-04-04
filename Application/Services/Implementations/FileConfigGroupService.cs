@@ -1,4 +1,5 @@
-﻿using DT_DataAcquisitionSystem.Domain.Entities;
+﻿using DT_DataAcquisitionSystem.Application.DTOs;
+using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using System;
 using System.Collections.Generic;
@@ -21,9 +22,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
         #region 查询操作 (Read)
 
-        public IEnumerable<AcquisitionGroup> GetList(string tableName = null, string dbName = null)
+        public IEnumerable<AcquisitionGroupDto> GetList(string tableName = null, string linkTableName = null, string dbName = null)
         {
-            return _repository.GetList(tableName, dbName);
+            return _repository.GetList(tableName, linkTableName, dbName);
         }
 
         public IEnumerable<AcquisitionGroup> GetByIds(string[] ids, string tableName = null, string dbName = null)

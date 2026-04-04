@@ -1,4 +1,5 @@
-﻿using DT_DataAcquisitionSystem.Domain.Entities;
+﻿using DT_DataAcquisitionSystem.Application.DTOs;
+using DT_DataAcquisitionSystem.Domain.Entities;
 using System.Collections.Generic;
 
 namespace DT_DataAcquisitionSystem.Application.Services
@@ -14,7 +15,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// <summary>
         /// 获取所有组（通常用于下拉框或列表展示）
         /// </summary>
-        IEnumerable<AcquisitionGroup> GetList(string tableName = null, string dbName = null);
+        IEnumerable<AcquisitionGroupDto> GetList(string tableName = null, string linkTableName = null, string dbName = null);
 
         /// <summary>
         /// 获取状态信息

@@ -1,5 +1,6 @@
 ﻿using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
+using DT_DataAcquisitionSystem.Application.DTOs;
 using Learun.DataBase.Repository;
 using System;
 using System.Collections.Generic;
@@ -15,14 +16,19 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
 
         #region Group Query
 
-        public IEnumerable<AcquisitionGroup> GetList(string tableName = DefaultGroupTable, string databaseName = DefaultDb)
+        public IEnumerable<AcquisitionGroupDto> GetList(string tableName = DefaultGroupTable, string linkTableName = DefaultGroupLinkTable, string databaseName = DefaultDb)
         {
             tableName = string.IsNullOrEmpty(tableName) ? DefaultGroupTable : tableName;
+            linkTableName = string.IsNullOrEmpty(linkTableName) ? DefaultGroupLinkTable : linkTableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
             // 增加 SortOrder 排序，符合管理系统的逻辑
-            string sql = $"SELECT * FROM [{tableName}] ORDER BY [SortOrder] ASC";
-            return this.BaseRepository(databaseName).FindList<AcquisitionGroup>(sql);
+            string sql = $@"SELECT 
+                                g.*, 
+                                (SELECT COUNT(*) FROM [{linkTableName}] c WHERE c.GroupId = g.Id) AS ConfigCount
+                            FROM [{tableName}] g
+                            ORDER BY g.SortOrder ASC";
+            return this.BaseRepository(databaseName).FindList<AcquisitionGroupDto>(sql);
         }
 
         public IEnumerable<AcquisitionGroup> GetListByIds(IEnumerable<string> ids, string tableName = DefaultGroupTable, string databaseName = DefaultDb)
