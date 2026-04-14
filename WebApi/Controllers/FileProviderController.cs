@@ -20,10 +20,12 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
     public class FileProviderController : BaseApi
     {
         private readonly IFileProviderFactory _fileProviderFactory;
+        private readonly IFileConfigService _fileConfigService;
 
-        public FileProviderController() : base("/api/files")
+        public FileProviderController(IFileConfigService fileConfigService) : base("/api/files")
         {
             _fileProviderFactory = FileIocHelper.GetFileProviderFactory();
+            _fileConfigService = fileConfigService;
 
             // --- 路由映射 ---
             Get["/list", true] = async (p, ct) => await GetFileList(p, ct);
@@ -32,9 +34,57 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
             Post["/upload", true] = async (p, ct) => await UploadFile(p, ct);
             Delete["/", true] = async (p, ct) => await DeleteFile(p, ct);
             Get["/preview", true] = async (p, ct) => await GetPreview(p, ct);
+            Get["/discovery", true] = async (p, ct) => await GetDetailedDiscovery(p, ct);
         }
 
         #region 业务接口实现
+
+        /// <summary>
+        /// 获取详细的文件巡检清单（包含存在与缺失的文件）
+        /// </summary>
+        private async Task<Response> GetDetailedDiscovery(dynamic p, CancellationToken ct)
+        {
+            // 1. 获取基础参数
+            string configId = this.Request.Query["configId"];
+            string startStr = this.Request.Query["startTime"];
+            string endStr = this.Request.Query["endTime"];
+            string user = this.Request.Query["user"];
+            string pass = this.Request.Query["pass"];
+
+            // 2. 参数校验与时间转换
+            if (string.IsNullOrEmpty(configId))
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "配置ID不能为空", null);
+
+            if (!DateTime.TryParse(startStr, out DateTime startDate))
+                startDate = DateTime.Now.AddDays(-7); // 默认查最近一周
+
+            if (!DateTime.TryParse(endStr, out DateTime endDate))
+                endDate = DateTime.Now;
+
+            try
+            {
+                // 3. 获取配置对象
+                var config = _fileConfigService.GetByIds(new[] { configId }).FirstOrDefault();
+
+                if (config == null)
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "未找到对应的采集配置", null);
+
+                // 4. 调用文件发现服务
+                // 同样的，FileDiscoveryService 建议通过 DI 注入
+                var discoveryService = new FileDiscoveryService();
+                var list = await discoveryService.GetDetailedDiscoveryAsync(config, startDate, endDate, user, pass);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取巡检清单成功",
+                    list
+                );
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, $"巡检失败: {ex.Message}", null);
+            }
+        }
 
         private async Task<Response> GetFileList(dynamic p, CancellationToken ct)
         {
