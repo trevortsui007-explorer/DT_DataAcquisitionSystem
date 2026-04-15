@@ -20,7 +20,8 @@ namespace DT_DataAcquisitionSystem.Infrastructure
             var result = new List<T>();
 
             // NPOI 自动识别 .xls 和 .xlsx
-            using (var workbook = WorkbookFactory.Create(stream))
+            var workbook = WorkbookFactory.Create(stream)
+            try
             {
                 ISheet sheet = GetSheet(workbook, opt.SheetName);
                 if (sheet == null) return result;
@@ -41,6 +42,15 @@ namespace DT_DataAcquisitionSystem.Infrastructure
                     // 重点：r + 1 还原为 Excel 左侧显示的物理行号，传入父类映射
                     result.Add(MapToEntity<T>(headers, fieldValues, r + 1, opt.HasExtFields, opt.FilePath));
                 }
+            }
+            finally
+            {
+                 // 手动进行释放检查
+                 if (workbook != null)
+                 {
+                    // 强制转换为 IDisposable 进行释放
+                    (workbook as IDisposable)?.Dispose();
+                 }
             }
             return result;
         }
