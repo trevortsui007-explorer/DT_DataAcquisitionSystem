@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Transactions;
 
 namespace DT_DataAcquisitionSystem.Application.Services
@@ -84,34 +85,32 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// <summary>
         /// 批量建立关联关系 (使用 SqlBulkCopy 优化)
         /// </summary>
-        public bool AddConfigsToGroup(int groupId, int[] configIds, string groupLinkTableName = null, string dbName = null)
+        public async Task<bool> AddConfigsToGroup(int groupId, int[] configIds, string tableName = null, string dbName = null)
         {
-
-            // 【设计决策】使用 TransactionScopeAsyncFlowOption 以支持在 async 环境下传播事务上下文
+            // TransactionScope 必须开启 AsyncFlowOption 才能在 await 之后保持事务
             using (var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled))
             {
                 try
                 {
-                    // 1. 删除该组现有的所有关联
-                    _repository.RemoveAllConfigsFromGroup(groupId, groupLinkTableName);
-
-                    // 2. 如果有新配置需要关联，执行批量写入
                     if (configIds != null && configIds.Length > 0)
                     {
                         DataTable dt = new DataTable();
+
                         dt.Columns.Add("GroupId", typeof(int));
                         dt.Columns.Add("ConfigId", typeof(int));
                         dt.Columns.Add("IsEnabled", typeof(bool));
 
-                        foreach (var id in configIds)
+                        if (configIds != null)
                         {
-                            dt.Rows.Add(groupId, id, true);
+                            foreach (var id in configIds)
+                            {
+                                // 为每一个 ID 创建一行数据
+                                dt.Rows.Add(groupId, id, true);
+                            }
                         }
 
-                        // 【异步调用】利用 BulkService 实现高性能写入
-                        // 注意：由于 Service 接口通常非 async，这里使用 GetAwaiter().GetResult() 
-                        // 确保同步阻塞等待完成，以符合当前接口定义。
-                        _dataService.BulkInsertAsync(dt, groupLinkTableName).GetAwaiter().GetResult();
+                        // 数据插入
+                        await _dataService.BulkInsertAsync(dt, tableName);
                     }
 
                     scope.Complete();
@@ -119,10 +118,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 }
                 catch (Exception ex)
                 {
-                    //LogEntryBuilder.CreateError("FileConfigGroupService",
-                    //    $"更新组 {groupId} 的配置关联失败: {ex.Message}").Write();
                     _ = ex.Message;
-                    
+                    // 记录日志
                     return false;
                 }
             }

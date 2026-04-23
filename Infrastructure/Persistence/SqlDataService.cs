@@ -135,7 +135,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Persistence
             if (dataTable == null || dataTable.Rows.Count == 0) return;
 
             // TableLock 提升写入性能，如遇高并发死锁可按需移除
-            using (var bulkCopy = new SqlBulkCopy(_connectionString, SqlBulkCopyOptions.Default | SqlBulkCopyOptions.TableLock))
+            using (var bulkCopy = new SqlBulkCopy(_connectionString, SqlBulkCopyOptions.Default))
             {
                 bulkCopy.DestinationTableName = $"[{destinationTableName}]";
                 bulkCopy.BatchSize = 50000;

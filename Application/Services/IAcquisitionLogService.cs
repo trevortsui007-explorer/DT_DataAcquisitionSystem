@@ -1,4 +1,5 @@
-﻿using System.Threading;
+﻿using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using DT_DataAcquisitionSystem.Domain.Entities;
 
@@ -17,5 +18,21 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
         // 更新本次采集任务进度
         Task<bool> UpdateTaskStatusAsync(string id, string status, int successCount, CancellationToken ct = default);
+
+        // 获取TaskLog记录
+        Task<AcquisitionTaskLogEntry> GetTaskLogByIdAsync(string taskLogId, CancellationToken ct = default);
+
+        // 获取TaskLogs记录
+        Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default);
+
+        // 运行中实时更新
+        Task<bool> UpdateProgressAsync(AcquisitionTaskLogEntry entry, CancellationToken ct = default);
+
+        // 更新任务进度
+        Task<bool> UpdateTaskProgressAsync(string id, string status, int totalConfigs, int successCount, int failureCount, string message = null, CancellationToken ct = default);
+
+        // 更新任务最终状态
+        Task<bool> CompleteTaskAsync(string id, string status, int totalConfigs, int successCount, int failureCount, string message = null, CancellationToken ct = default);
+
     }
 }

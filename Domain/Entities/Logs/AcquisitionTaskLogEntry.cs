@@ -26,5 +26,13 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
         public int TotalConfigs { get; set; }
 
         public int SuccessCount { get; set; }
+        public int FailureCount { get; set; }
+
+        public int ProcessedCount { get; set; }
+
+        public int Progress { get; set; }
+
+        [StringLength(500)]
+        public string Message { get; set; }
     }
 }

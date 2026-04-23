@@ -1,7 +1,9 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
 using System.Data.SqlClient;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Dapper;
@@ -63,10 +65,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
         {
             const string sql = @"
                 INSERT INTO [dbo].[DA_AcquisitionTaskLog]
-                ([TaskId], [StartTime], [EndTime], [Status], [TotalConfigs], [SuccessCount])
+                ([TaskId], [StartTime], [EndTime], [Status], [TotalConfigs], [SuccessCount], [FailureCount], [ProcessedCount], [Progress], [Message])
                 OUTPUT INSERTED.[Id]
                 VALUES
-                (@TaskId, @StartTime, @EndTime, @Status, @TotalConfigs, @SuccessCount);";
+                (@TaskId, @StartTime, @EndTime, @Status, @TotalConfigs, @SuccessCount, @FailureCount, @ProcessedCount, @Progress, @Message);";
 
             using (var conn = new SqlConnection(_connectionString))
             {
@@ -80,6 +82,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     cmd.Parameters.Add("@Status", SqlDbType.NVarChar, 50).Value = (object)entry.Status ?? DBNull.Value;
                     cmd.Parameters.Add("@TotalConfigs", SqlDbType.Int).Value = entry.TotalConfigs;
                     cmd.Parameters.Add("@SuccessCount", SqlDbType.Int).Value = entry.SuccessCount;
+                    cmd.Parameters.Add("@FailureCount", SqlDbType.Int).Value = entry.FailureCount;
+                    cmd.Parameters.Add("@ProcessedCount", SqlDbType.Int).Value = entry.ProcessedCount;
+                    cmd.Parameters.Add("@Progress", SqlDbType.Int).Value = entry.Progress;
+                    cmd.Parameters.Add("@Message", SqlDbType.NVarChar, 500).Value = (object)entry.Message ?? DBNull.Value;
 
                     var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
 
@@ -140,19 +146,130 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 UPDATE [dbo].[DA_AcquisitionTaskLog]
                 SET [EndTime] = @EndTime,
                     [Status] = @Status,
-                    [SuccessCount] = @SuccessCount
+                    [SuccessCount] = @SuccessCount,
+                    [FailureCount] = @FailureCount,
+                    [ProcessedCount] = @ProcessedCount,
+                    [Progress] = @Progress,
+                    [Message] = @Message
                 WHERE [Id] = @Id";
 
             using (var conn = new SqlConnection(_connectionString))
             {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
                 int rows = await conn.ExecuteAsync(sql, new
                 {
                     entry.EndTime,
                     entry.Status,
                     entry.SuccessCount,
+                    entry.FailureCount,
+                    entry.ProcessedCount,
+                    entry.Progress,
+                    entry.Message,
                     entry.Id
                 });
+
                 return rows > 0;
+            }
+        }
+
+        // 更新运行中的进度
+        public async Task<bool> UpdateProgressAsync(AcquisitionTaskLogEntry entry, CancellationToken ct = default)
+        {
+            const string sql = @"
+                UPDATE [dbo].[DA_AcquisitionTaskLog]
+                SET [Status] = @Status,
+                    [SuccessCount] = @SuccessCount,
+                    [FailureCount] = @FailureCount,
+                    [ProcessedCount] = @ProcessedCount,
+                    [Progress] = @Progress,
+                    [Message] = @Message
+                WHERE [Id] = @Id";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                int rows = await conn.ExecuteAsync(sql, new
+                {
+                    entry.Status,
+                    entry.SuccessCount,
+                    entry.FailureCount,
+                    entry.ProcessedCount,
+                    entry.Progress,
+                    entry.Message,
+                    entry.Id
+                });
+
+                return rows > 0;
+            }
+        }
+
+        // 按 taskLogId 查询总任务日志
+        public async Task<AcquisitionTaskLogEntry> GetTaskLogByIdAsync(string taskLogId, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT TOP 1
+                    CAST([Id] AS NVARCHAR(50)) AS [Id],
+                    [TaskId],
+                    [StartTime],
+                    [EndTime],
+                    [Status],
+                    [TotalConfigs],
+                    [SuccessCount],
+                    [FailureCount],
+                    [ProcessedCount],
+                    [Progress],
+                    [Message]
+                FROM [dbo].[DA_AcquisitionTaskLog]
+                WHERE [Id] = @TaskLogId";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                var result = await conn.QueryFirstOrDefaultAsync<AcquisitionTaskLogEntry>(
+                    new CommandDefinition(
+                        sql,
+                        new { TaskLogId = taskLogId },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return result;
+            }
+        }
+
+        // 按 taskLogId 查询明细日志
+        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT
+                    CAST([Id] AS NVARCHAR(50)) AS [Id],
+                    CAST([TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
+                    [ConfigId],
+                    [FileName],
+                    [StartRow],
+                    [ProcessedRows],
+                    [StartTime],
+                    [EndTime],
+                    [Status],
+                    [ErrorMessage]
+                FROM [dbo].[DA_AcquisitionLog]
+                WHERE [TaskLogId] = @TaskLogId
+                ORDER BY [StartTime] DESC, [Id] DESC";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                var result = await conn.QueryAsync<AcquisitionLogEntry>(
+                    new CommandDefinition(
+                        sql,
+                        new { TaskLogId = taskLogId },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return result.ToList();
             }
         }
     }
