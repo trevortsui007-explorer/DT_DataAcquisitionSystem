@@ -50,6 +50,9 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
 
             // 7. 查询任务明细
             Get["/{taskLogId}/details", true] = async (p, ct) => await GetTaskDetails(p, ct);
+
+            // 8. 查询任务列表
+            Get["/task-logs", true] = async (p, ct) => await GetTaskLogs(p, ct);
         }
 
         #region 启动接口
@@ -372,6 +375,43 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                 return this.ToResponse(
                     NancyModuleExtensions.ResponseCode.fail,
                     $"获取任务明细异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// GET /task-logs
+        /// </summary>
+        private async Task<Response> GetTaskLogs(dynamic p, CancellationToken ct)
+        {
+            int pageNo = int.TryParse(this.GetParam("pageNo"), out var pn) ? pn : 1;
+            int pageSize = int.TryParse(this.GetParam("pageSize"), out var ps) ? ps : 20;
+
+            string status = this.GetParam("status");
+            int? taskId = int.TryParse(this.GetParam("taskId"), out var tid) ? tid : (int?)null;
+            DateTime? startTime = DateTime.TryParse(this.GetParam("startTime"), out var st) ? st : (DateTime?)null;
+            DateTime? endTime = DateTime.TryParse(this.GetParam("endTime"), out var et) ? et : (DateTime?)null;
+
+            if (pageNo <= 0) pageNo = 1;
+            if (pageSize <= 0) pageSize = 20;
+            if (pageSize > 200) pageSize = 200;
+
+            try
+            {
+                var result = await _executionService
+                    .GetTaskLogsAsync(pageNo, pageSize, status, startTime, endTime, taskId, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取任务日志列表成功",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"获取任务日志列表异常: {ex.Message}",
                     null);
             }
         }
