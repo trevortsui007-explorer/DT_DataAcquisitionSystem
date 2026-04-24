@@ -9,6 +9,8 @@ using System.Linq;
 using System.IO;
 using Newtonsoft.Json;
 using DT_DataAcquisitionSystem.Application.DTOs;
+using System.Threading.Tasks;
+using System;
 
 namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Controllers
 {
@@ -51,7 +53,7 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
             // --- 配置组关联 (Config-Group Link) 路由映射 ---
 
             // 8. 批量建立关联
-            Post["/group/{groupId:int}/configs"] = AddConfigsToGroup;
+            Post["/group/{groupId}/configs", true] = async (p, ct) => await AddConfigsToGroup(p);
 
             // 9. 批量解除关联
             Delete["/group/{groupId:int}/configs"] = RemoveConfigsFromGroup;
@@ -171,25 +173,36 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
             public int[] ConfigIds { get; set; }
         }
 
-        private Response AddConfigsToGroup(dynamic p)
+        private async Task<object> AddConfigsToGroup(dynamic p)
         {
-            var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionGroup_Config");
-            int groupId = (int)p.groupId;
-
-            // 2. 从 QueryString 获取 ids，例如: /group/1/configs?ids=101,102
-            string[] idsStr = this.GetQueryArray("ids");
-            var configIds = idsStr?.Select(int.Parse).ToArray();
-
-            if (configIds == null || configIds.Length == 0)
+            try
             {
-                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "缺少待关联的配置 ID 列表，请检查 JSON Key 是否为 'configIds'", null);
+                var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionGroup_Config");
+                int groupId = (int)p.groupId;
+
+                // 获取 ids
+                string[] idsStr = this.GetQueryArray("ids");
+
+                if (idsStr == null || idsStr.Length == 0)
+                {
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "缺少待关联的配置 ID 列表", null);
+                }
+
+                var configIds = idsStr.Select(int.Parse).ToArray();
+
+                // 2. 使用 await 调用异步方法
+                // 注意：请确保 _fileConfigGroupService.AddConfigsToGroupAsync 的参数与此处一致
+                bool success = await _fileConfigGroupService.AddConfigsToGroup(groupId, configIds, ctx.TableName, ctx.DatabaseName);
+
+                return success
+                    ? this.ToResponse(NancyModuleExtensions.ResponseCode.success, "关联成功", null)
+                    : this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "关联失败", null);
             }
-
-            bool success = _fileConfigGroupService.AddConfigsToGroup(groupId, configIds, ctx.TableName, ctx.DatabaseName);
-
-            return success
-                ? this.ToResponse(NancyModuleExtensions.ResponseCode.success, "关联成功", null)
-                : this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "关联失败", null);
+            catch (Exception ex)
+            {
+                // 建议增加异常捕获，防止 Parse 或其他逻辑崩溃
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, $"操作异常: {ex.Message}", null);
+            }
         }
 
         /// <summary>

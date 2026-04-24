@@ -14,13 +14,13 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
     /// <summary>
     /// 文件自动化采集任务执行接口
     /// </summary>
-    public class AcquisitionTaskController : BaseApi
+    public class AcquisitionController : BaseApi
     {
         private readonly DataAcquisitionService _acquisitionService;
         private readonly IFileConfigService _fileConfigService;
         private readonly IAcquisitionLogService _logService;
 
-        public AcquisitionTaskController(
+        public AcquisitionController(
             DataAcquisitionService acquisitionService,
             IFileConfigService fileConfigService, IAcquisitionLogService logService) : base("/api/data-acquisition")
         {

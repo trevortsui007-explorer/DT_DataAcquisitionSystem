@@ -1,6 +1,7 @@
 ﻿using DT_DataAcquisitionSystem.Application.DTOs;
 using DT_DataAcquisitionSystem.Domain.Entities;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
@@ -35,7 +36,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
         #region 关联操作（配置 - 配置组）
 
-        bool AddConfigsToGroup(int groupId, int[] configIds, string tableName = null, string dbName = null);
+        Task<bool> AddConfigsToGroup(int groupId, int[] configIds, string tableName = null, string dbName = null);
         bool RemoveConfigsFromGroup(int groupId, int[] configIds, string tableName = null, string dbName = null);
 
         #endregion

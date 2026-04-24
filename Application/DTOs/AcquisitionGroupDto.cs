@@ -1,4 +1,6 @@
-﻿namespace DT_DataAcquisitionSystem.Application.DTOs
+﻿using System.Collections.Generic;
+
+namespace DT_DataAcquisitionSystem.Application.DTOs
 {
     public class AcquisitionGroupDto
     {
@@ -9,5 +11,6 @@
         public int SortOrder { get; set; }
         public int IsEnable { get; set; }
         public int ConfigCount { get; set; }
+        public List<AcquisitionConfigDto> AssociatedConfigs { get; set; }
     }
 }

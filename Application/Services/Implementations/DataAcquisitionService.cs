@@ -102,58 +102,24 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// </summary>
         private async Task<AcquisitionSummary> ExecuteBatchInternal(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, CancellationToken ct)
         {
+            var configList = (configs ?? Enumerable.Empty<AcquisitionConfig>()).ToList();
+
             // 采集开始：记录手动Task日志
             var taskLogEntry = new AcquisitionTaskLogEntry
             {
                 TaskId = 0,
                 StartTime = DateTime.Now,
                 Status = "Running",
-                TotalConfigs = configs.Count() * ((end.Date - start.Date).Days + 1)
+                TotalConfigs = configList.Count * ((end.Date - start.Date).Days + 1),
+                SuccessCount = 0,
+                FailureCount = 0,
+                ProcessedCount = 0,
+                Progress = 0,
+                Message = "任务已创建，等待执行。"
             };
             string taskLogId = await _logService.RecordTaskLogEntryAsync(taskLogEntry, ct);
 
-            var summary = new AcquisitionSummary();
-            var tasks = new List<Task>();
-
-            // 1. 任务打平：将 (配置 x 日期) 展开为独立任务
-            foreach (var config in configs)
-            {
-                for (var date = start.Date; date <= end.Date; date = date.AddDays(1))
-                {
-                    var targetDate = date; // 闭包变量捕获
-                    var task = Task.Run(async () =>
-                    {
-                        await _concurrencySemaphore.WaitAsync(ct);
-                        try
-                        {
-                            // 执行具体采集
-                            await ProcessSingleConfig(config, targetDate, taskLogId, ct);
-                            Interlocked.Increment(ref summary.SuccessCount);
-                        }
-                        catch (Exception ex)
-                        {
-                            Interlocked.Increment(ref summary.FailureCount);
-                            lock (summary.ErrorDetails)
-                            {
-                                summary.ErrorDetails.Add($"[配置:{config.EqName}][日期:{targetDate:yyyy-MM-dd}] 失败: {ex.Message}");
-                            }
-                        }
-                        finally
-                        {
-                            _concurrencySemaphore.Release();
-                        }
-                    }, ct);
-
-                    tasks.Add(task);
-                }
-            }
-
-            // 2. 等待所有任务完成（无论成功失败）
-            await Task.WhenAll(tasks);
-            if (summary.SuccessCount > 0) await _logService.UpdateTaskStatusAsync(taskLogId, "Success", summary.SuccessCount);
-            else await _logService.UpdateTaskStatusAsync(taskLogId, "Failed", summary.SuccessCount);
-
-            return summary;
+            return await ExecuteBatchWithTaskLogAsync(configList, start, end, taskLogId, ct).ConfigureAwait(false);
         }
 
         #endregion
@@ -367,6 +333,112 @@ namespace DT_DataAcquisitionSystem.Application.Services
             }
         }
 
+        #endregion
+
+        #region 批量处理结合日志系统
+        public async Task<AcquisitionSummary> ExecuteBatchWithTaskLogAsync(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            var configList = (configs ?? Enumerable.Empty<AcquisitionConfig>()).ToList();
+            var summary = new AcquisitionSummary();
+
+            int totalCount = configList.Count * ((end.Date - start.Date).Days + 1);
+
+            if (totalCount <= 0)
+            {
+                await _logService.CompleteTaskAsync(
+                    taskLogId,
+                    "NoData",
+                    0,
+                    0,
+                    0,
+                    "没有可执行的采集配置。",
+                    ct
+                ).ConfigureAwait(false);
+
+                return summary;
+            }
+
+            var tasks = new List<Task>();
+
+            foreach (var config in configList)
+            {
+                for (var date = start.Date; date <= end.Date; date = date.AddDays(1))
+                {
+                    var targetDate = date;
+
+                    var task = Task.Run(async () =>
+                    {
+                        await _concurrencySemaphore.WaitAsync(ct).ConfigureAwait(false);
+                        try
+                        {
+                            await ProcessSingleConfig(config, targetDate, taskLogId, ct).ConfigureAwait(false);
+                            Interlocked.Increment(ref summary.SuccessCount);
+                        }
+                        catch (Exception ex)
+                        {
+                            Interlocked.Increment(ref summary.FailureCount);
+                            lock (summary.ErrorDetails)
+                            {
+                                summary.ErrorDetails.Add(
+                                    $"[配置:{config.EqName}][日期:{targetDate:yyyy-MM-dd}] 失败: {ex.Message}");
+                            }
+                        }
+                        finally
+                        {
+                            int processedCount = summary.SuccessCount + summary.FailureCount;
+
+                            await _logService.UpdateTaskProgressAsync(
+                                taskLogId,
+                                "Running",
+                                totalCount,
+                                summary.SuccessCount,
+                                summary.FailureCount,
+                                $"运行中：{processedCount}/{totalCount}",
+                                ct
+                            ).ConfigureAwait(false);
+
+                            _concurrencySemaphore.Release();
+                        }
+                    }, ct);
+
+                    tasks.Add(task);
+                }
+            }
+
+            try
+            {
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            catch
+            {
+                // 子任务异常已在各自内部累计失败数并记录，这里不重复抛出
+            }
+
+            string finalStatus;
+            if (summary.SuccessCount > 0 && summary.FailureCount == 0)
+                finalStatus = "Success";
+            else if (summary.SuccessCount == 0 && summary.FailureCount > 0)
+                finalStatus = "Failed";
+            else if (summary.SuccessCount > 0 && summary.FailureCount > 0)
+                finalStatus = "PartialSuccess";
+            else
+                finalStatus = "NoData";
+
+            await _logService.CompleteTaskAsync(
+                taskLogId,
+                finalStatus,
+                totalCount,
+                summary.SuccessCount,
+                summary.FailureCount,
+                "任务完成",
+                ct
+            ).ConfigureAwait(false);
+
+            return summary;
+        }
         #endregion
     }
 }

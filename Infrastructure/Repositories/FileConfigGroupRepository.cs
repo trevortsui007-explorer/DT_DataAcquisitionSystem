@@ -22,13 +22,47 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             linkTableName = string.IsNullOrEmpty(linkTableName) ? DefaultGroupLinkTable : linkTableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
-            // 增加 SortOrder 排序，符合管理系统的逻辑
-            string sql = $@"SELECT 
-                                g.*, 
-                                (SELECT COUNT(*) FROM [{linkTableName}] c WHERE c.GroupId = g.Id) AS ConfigCount
-                            FROM [{tableName}] g
-                            ORDER BY g.SortOrder ASC";
-            return this.BaseRepository(databaseName).FindList<AcquisitionGroupDto>(sql);
+            // Step 1：查 Group
+            string groupSql = $@"
+                SELECT 
+                    g.*, 
+                    (SELECT COUNT(*) FROM [{linkTableName}] c WHERE c.GroupId = g.Id) AS ConfigCount
+                FROM [{tableName}] g
+                ORDER BY g.SortOrder ASC";
+
+            var groups = this.BaseRepository(databaseName).FindList<AcquisitionGroupDto>(groupSql).ToList();
+
+            // Step 2：查 Config（扁平）
+            string configSql = $@"
+                SELECT 
+                    gc.GroupId,
+                    c.EqName
+                FROM [{linkTableName}] gc
+                LEFT JOIN DA_AcquisitionConfig c ON gc.ConfigId = c.Id";
+
+            var configFlatList = this.BaseRepository(databaseName).FindList<GroupConfigFlatDto>(configSql);
+
+            // Step 3：分组（GroupId → List<AcquisitionConfigDto>）
+            var configDict = configFlatList
+                .Where(x => x.EqName != null)
+                .GroupBy(x => x.GroupId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(x => new AcquisitionConfigDto
+                    {
+                        EqName = x.EqName
+                    }).ToList()
+                );
+
+            // Step 4：组装到 Group
+            foreach (var group in groups)
+            {
+                group.AssociatedConfigs = configDict.ContainsKey(group.Id)
+                    ? configDict[group.Id]
+                    : new List<AcquisitionConfigDto>();
+            }
+
+            return groups;
         }
 
         public IEnumerable<AcquisitionGroup> GetListByIds(IEnumerable<string> ids, string tableName = DefaultGroupTable, string databaseName = DefaultDb)

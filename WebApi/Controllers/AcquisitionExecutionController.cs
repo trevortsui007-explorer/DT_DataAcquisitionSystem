@@ -1,0 +1,381 @@
+﻿using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using DT_DataAcquisitionSystem.Application.Services;
+using DT_DataAcquisitionSystem.Common.Extensions;
+using Learun.Application.WebApi;
+using Nancy;
+using Nancy.ModelBinding;
+
+namespace DT_DataAcquisitionSystem.WebApi.Controllers
+{
+    /// <summary>
+    /// 采集执行器任务启动与状态查询接口
+    /// </summary>
+    public class AcquisitionExecutionController : BaseApi
+    {
+        private readonly IAcquisitionExecutionService _executionService;
+        private readonly IFileConfigService _fileConfigService;
+
+        public AcquisitionExecutionController(
+            IAcquisitionExecutionService executionService,
+            IFileConfigService fileConfigService)
+            : base("/api/data-acquisition/execution")
+        {
+            _executionService = executionService;
+            _fileConfigService = fileConfigService;
+
+            // --- 启动接口 ---
+
+            // 1. 根据配置 IDs 启动
+            Post["/start/by-ids", true] = async (p, ct) => await StartByIds(p, ct);
+
+            // 2. 根据组 IDs 启动
+            Post["/start/by-groups", true] = async (p, ct) => await StartByGroups(p, ct);
+
+            // 3. 根据任务 IDs 启动
+            Post["/start/by-tasks", true] = async (p, ct) => await StartByTasks(p, ct);
+
+            // 4. 根据单个配置 ID + 时间范围启动
+            Post["/start/by-range/{id}", true] = async (p, ct) => await StartByRange(p, ct);
+
+            // 5. 根据配置查询条件 + 时间范围启动
+            Post["/start/configs-range", true] = async (p, ct) => await StartConfigsRange(p, ct);
+
+            // --- 查询接口 ---
+
+            // 6. 查询任务状态
+            Get["/{taskLogId}/status", true] = async (p, ct) => await GetTaskStatus(p, ct);
+
+            // 7. 查询任务明细
+            Get["/{taskLogId}/details", true] = async (p, ct) => await GetTaskDetails(p, ct);
+        }
+
+        #region 启动接口
+
+        /// <summary>
+        /// POST /start/by-ids
+        /// </summary>
+        private async Task<Response> StartByIds(dynamic p, CancellationToken ct)
+        {
+            DateTime processDate = DateTime.TryParse(this.GetParam("processDate"), out var dt)
+                ? dt
+                : DateTime.Now;
+
+            string[] ids = this.GetQueryArray("ids");
+
+            if (ids == null || ids.Length == 0)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：ids 不能为空",
+                    null);
+            }
+
+            try
+            {
+                var result = await _executionService
+                    .StartByIdsAsync(ids, processDate, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    result?.Message ?? "采集任务已启动",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"按配置启动任务异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// POST /start/by-groups
+        /// </summary>
+        private async Task<Response> StartByGroups(dynamic p, CancellationToken ct)
+        {
+            DateTime processDate = DateTime.TryParse(this.GetParam("processDate"), out var dt)
+                ? dt
+                : DateTime.Now;
+
+            string[] groupIds = this.GetQueryArray("groupIds");
+
+            if (groupIds == null || groupIds.Length == 0)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：groupIds 不能为空",
+                    null);
+            }
+
+            try
+            {
+                var result = await _executionService
+                    .StartByGroupsAsync(groupIds, processDate, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    result?.Message ?? "分组采集任务已启动",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"按组启动任务异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// POST /start/by-tasks
+        /// </summary>
+        private async Task<Response> StartByTasks(dynamic p, CancellationToken ct)
+        {
+            DateTime processDate = DateTime.TryParse(this.GetParam("processDate"), out var dt)
+                ? dt
+                : DateTime.Now;
+
+            string[] taskIds = this.GetQueryArray("taskIds");
+
+            if (taskIds == null || taskIds.Length == 0)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：taskIds 不能为空",
+                    null);
+            }
+
+            try
+            {
+                var result = await _executionService
+                    .StartByTasksAsync(taskIds, processDate, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    result?.Message ?? "计划任务采集已启动",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"按任务启动异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// POST /start/by-range/{id}
+        /// </summary>
+        private async Task<Response> StartByRange(dynamic p, CancellationToken ct)
+        {
+            var ctx = NancyModuleExtensions.GetQueryContext(this);
+
+            string id = (string)p.id;
+
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：id 不能为空",
+                    null);
+            }
+
+            if (!DateTime.TryParse(this.GetParam("startDate"), out var startDate))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：startDate 格式不正确",
+                    null);
+            }
+
+            if (!DateTime.TryParse(this.GetParam("endDate"), out var endDate))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：endDate 格式不正确",
+                    null);
+            }
+
+            if (endDate.Date < startDate.Date)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：结束时间不能早于开始时间",
+                    null);
+            }
+
+            try
+            {
+                var configs = _fileConfigService.GetByIds(new[] { id }, ctx.TableName, ctx.DatabaseName);
+                var config = configs?.FirstOrDefault();
+
+                if (config == null)
+                {
+                    return this.ToResponse(
+                        NancyModuleExtensions.ResponseCode.fail,
+                        $"未找到 ID 为 {id} 的配置信息",
+                        null);
+                }
+
+                var result = await _executionService
+                    .StartByRangeAsync(config, startDate, endDate, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    result?.Message ?? "区间采集任务已启动",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"按时间范围启动异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// POST /start/configs-range
+        /// </summary>
+        private async Task<Response> StartConfigsRange(dynamic p, CancellationToken ct)
+        {
+            if (!DateTime.TryParse(this.GetParam("startDate"), out var startDate))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：startDate 格式不正确",
+                    null);
+            }
+
+            if (!DateTime.TryParse(this.GetParam("endDate"), out var endDate))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：endDate 格式不正确",
+                    null);
+            }
+
+            if (endDate.Date < startDate.Date)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：结束时间不能早于开始时间",
+                    null);
+            }
+
+            try
+            {
+                var options = this.Bind<Domain.Entities.FileConfigQueryOptions>() ?? new Domain.Entities.FileConfigQueryOptions();
+
+                var result = await _executionService
+                    .StartConfigsByRangeAsync(options, startDate, endDate, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    result?.Message ?? "批量区间采集任务已启动",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"按条件批量区间启动异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        #endregion
+
+        #region 查询接口
+
+        /// <summary>
+        /// GET /{taskLogId}/status
+        /// </summary>
+        private async Task<Response> GetTaskStatus(dynamic p, CancellationToken ct)
+        {
+            string taskLogId = (string)p.taskLogId;
+
+            if (string.IsNullOrWhiteSpace(taskLogId))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：taskLogId 不能为空",
+                    null);
+            }
+
+            try
+            {
+                var result = await _executionService
+                    .GetTaskStatusAsync(taskLogId, ct)
+                    .ConfigureAwait(false);
+
+                if (result == null)
+                {
+                    return this.ToResponse(
+                        NancyModuleExtensions.ResponseCode.fail,
+                        $"未找到 taskLogId = {taskLogId} 的任务状态",
+                        null);
+                }
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取任务状态成功",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"获取任务状态异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// GET /{taskLogId}/details
+        /// </summary>
+        private async Task<Response> GetTaskDetails(dynamic p, CancellationToken ct)
+        {
+            string taskLogId = (string)p.taskLogId;
+
+            if (string.IsNullOrWhiteSpace(taskLogId))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：taskLogId 不能为空",
+                    null);
+            }
+
+            try
+            {
+                var result = await _executionService
+                    .GetTaskDetailsAsync(taskLogId, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取任务明细成功",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"获取任务明细异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        #endregion
+    }
+}
