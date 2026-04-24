@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using DT_DataAcquisitionSystem.Domain.Entities;
@@ -41,5 +42,15 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
         /// 获取指定配置与文件最后一次处理到的行号，用于断点续传
         /// </summary>
         Task<int> GetLastProcessedRowByConfigIdAsync(int configId, string fileName, CancellationToken ct = default);
+
+        /// <summary>
+        /// 获取采集任务日志列表（支持分页与多条件筛选）
+        /// </summary>
+        Task<List<AcquisitionTaskLogEntry>> GetTaskLogsAsync(int pageNo, int pageSize, string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default);
+
+        /// <summary>
+        /// 获取采集任务日志总数（用于分页计数）
+        /// </summary>
+        Task<int> GetTaskLogsCountAsync(string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default);
     }
 }

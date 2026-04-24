@@ -110,6 +110,58 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 .ToList();
         }
 
+        public async Task<PagedResultDto<TaskLogListItemDto>> GetTaskLogsAsync(int pageNo, int pageSize, string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default)
+        {
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 20 : pageSize;
+
+            if (safePageSize > 200)
+            {
+                safePageSize = 200;
+            }
+
+            var logs = await _acquisitionLogService.GetTaskLogsAsync(
+                safePageNo,
+                safePageSize,
+                status,
+                startTime,
+                endTime,
+                taskId,
+                ct).ConfigureAwait(false);
+
+            var total = await _acquisitionLogService.GetTaskLogsCountAsync(
+                status,
+                startTime,
+                endTime,
+                taskId,
+                ct).ConfigureAwait(false);
+
+            var items = (logs ?? new List<AcquisitionTaskLogEntry>())
+                .Select(x => new TaskLogListItemDto
+                {
+                    TaskLogId = x.Id,
+                    TaskId = x.TaskId,
+                    Status = x.Status,
+                    TotalConfigs = x.TotalConfigs,
+                    SuccessCount = x.SuccessCount,
+                    FailureCount = x.FailureCount,
+                    ProcessedCount = x.ProcessedCount,
+                    Progress = x.Progress,
+                    StartTime = x.StartTime,
+                    EndTime = x.EndTime,
+                    Message = x.Message
+                })
+                .ToList();
+
+            return new PagedResultDto<TaskLogListItemDto>
+            {
+                Items = items,
+                Total = total,
+                PageNo = safePageNo,
+                PageSize = safePageSize
+            };
+        }
+
         private async Task<TaskStartResponseDto> StartBatchAsync(
             List<AcquisitionConfig> configs,
             DateTime startDate,

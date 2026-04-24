@@ -135,6 +135,42 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return await _logRepo.UpdateAsync(entry, ct).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// 分页查询任务总日志列表
+        /// </summary>
+        public async Task<List<AcquisitionTaskLogEntry>> GetTaskLogsAsync(int pageNo, int pageSize, string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default)
+        {
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 20 : pageSize;
+
+            if (safePageSize > 200)
+            {
+                safePageSize = 200;
+            }
+
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                status = status.Trim();
+            }
+
+            var result = await _logRepo.GetTaskLogsAsync(safePageNo, safePageSize, status, startTime, endTime, taskId, ct).ConfigureAwait(false);
+
+            return result ?? new List<AcquisitionTaskLogEntry>();
+        }
+
+        /// <summary>
+        /// 查询任务总日志总数
+        /// </summary>
+        public async Task<int> GetTaskLogsCountAsync(string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default)
+        {
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                status = status.Trim();
+            }
+
+            return await _logRepo.GetTaskLogsCountAsync(status, startTime, endTime, taskId, ct).ConfigureAwait(false);
+        }
+
         public async Task<AcquisitionTaskLogEntry> GetTaskLogByIdAsync(string taskLogId, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))

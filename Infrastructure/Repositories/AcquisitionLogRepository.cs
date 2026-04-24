@@ -272,5 +272,70 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 return result.ToList();
             }
         }
+
+        public async Task<List<AcquisitionTaskLogEntry>> GetTaskLogsAsync(int pageNo, int pageSize, string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT 
+                    CAST([Id] AS NVARCHAR(50)) AS [Id],
+                    [TaskId],
+                    [StartTime],
+                    [EndTime],
+                    [Status],
+                    [TotalConfigs],
+                    [SuccessCount],
+                    [FailureCount],
+                    [ProcessedCount],
+                    [Progress],
+                    [Message]
+                FROM [dbo].[DA_AcquisitionTaskLog]
+                WHERE (@Status IS NULL OR [Status] = @Status)
+                  AND (@TaskId IS NULL OR [TaskId] = @TaskId)
+                  AND (@StartTime IS NULL OR [StartTime] >= @StartTime)
+                  AND (@EndTime IS NULL OR [StartTime] <= @EndTime)
+                ORDER BY [StartTime] DESC, [Id] DESC
+                OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 20 : pageSize;
+            int offset = (safePageNo - 1) * safePageSize;
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                var result = await conn.QueryAsync<AcquisitionTaskLogEntry>(sql, new
+                {
+                    Status = string.IsNullOrWhiteSpace(status) ? null : status.Trim(),
+                    TaskId = taskId,
+                    StartTime = startTime,
+                    EndTime = endTime,
+                    Offset = offset,
+                    PageSize = safePageSize
+                });
+
+                return result?.ToList() ?? new List<AcquisitionTaskLogEntry>();
+            }
+        }
+
+        public async Task<int> GetTaskLogsCountAsync(string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT COUNT(1)
+                FROM [dbo].[DA_AcquisitionTaskLog]
+                WHERE (@Status IS NULL OR [Status] = @Status)
+                  AND (@TaskId IS NULL OR [TaskId] = @TaskId)
+                  AND (@StartTime IS NULL OR [StartTime] >= @StartTime)
+                  AND (@EndTime IS NULL OR [StartTime] <= @EndTime);";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                return await conn.ExecuteScalarAsync<int>(sql, new
+                {
+                    Status = string.IsNullOrWhiteSpace(status) ? null : status.Trim(),
+                    TaskId = taskId,
+                    StartTime = startTime,
+                    EndTime = endTime
+                });
+            }
+        }
     }
 }
