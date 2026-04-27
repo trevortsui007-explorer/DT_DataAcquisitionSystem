@@ -6,6 +6,8 @@ namespace DT_DataAcquisitionSystem.Application.DTOs
     {
         public string TaskLogId { get; set; }
         public int TaskId { get; set; }
+        public string TaskCode { get; set; }
+        public string TriggerType { get; set; }
         public string Status { get; set; }
         public int TotalConfigs { get; set; }
         public int SuccessCount { get; set; }

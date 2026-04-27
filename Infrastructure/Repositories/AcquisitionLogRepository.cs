@@ -65,10 +65,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
         {
             const string sql = @"
                 INSERT INTO [dbo].[DA_AcquisitionTaskLog]
-                ([TaskId], [StartTime], [EndTime], [Status], [TotalConfigs], [SuccessCount], [FailureCount], [ProcessedCount], [Progress], [Message])
+                ([TaskId],[TaskCode], [TriggerType], [StartTime], [EndTime], [Status], [TotalConfigs], [SuccessCount], [FailureCount], [ProcessedCount], [Progress], [Message])
                 OUTPUT INSERTED.[Id]
                 VALUES
-                (@TaskId, @StartTime, @EndTime, @Status, @TotalConfigs, @SuccessCount, @FailureCount, @ProcessedCount, @Progress, @Message);";
+                (@TaskId,@TaskCode, @TriggerType, @StartTime, @EndTime, @Status, @TotalConfigs, @SuccessCount, @FailureCount, @ProcessedCount, @Progress, @Message);";
 
             using (var conn = new SqlConnection(_connectionString))
             {
@@ -77,6 +77,8 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 using (var cmd = new SqlCommand(sql, conn))
                 {
                     cmd.Parameters.Add("@TaskId", SqlDbType.Int).Value = entry.TaskId;
+                    cmd.Parameters.Add("@TaskCode", SqlDbType.VarChar, 50).Value = (object)entry.TaskCode ?? DBNull.Value;
+                    cmd.Parameters.Add("@TriggerType", SqlDbType.VarChar, 10).Value = (object)entry.TriggerType ?? DBNull.Value;
                     cmd.Parameters.Add("@StartTime", SqlDbType.DateTime).Value = entry.StartTime;
                     cmd.Parameters.Add("@EndTime", SqlDbType.DateTime).Value = (object)entry.EndTime ?? DBNull.Value;
                     cmd.Parameters.Add("@Status", SqlDbType.NVarChar, 50).Value = (object)entry.Status ?? DBNull.Value;
@@ -212,6 +214,8 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 SELECT TOP 1
                     CAST([Id] AS NVARCHAR(50)) AS [Id],
                     [TaskId],
+                    [TaskCode],
+                    [TriggerType],
                     [StartTime],
                     [EndTime],
                     [Status],
@@ -279,6 +283,8 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 SELECT 
                     CAST([Id] AS NVARCHAR(50)) AS [Id],
                     [TaskId],
+                    [TaskCode],
+                    [TriggerType],
                     [StartTime],
                     [EndTime],
                     [Status],

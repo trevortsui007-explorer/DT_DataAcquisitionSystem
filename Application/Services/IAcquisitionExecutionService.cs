@@ -12,6 +12,10 @@ namespace DT_DataAcquisitionSystem.Application.Services
         Task<TaskStartResponseDto> StartByIdsAsync(string[] ids, DateTime processDate, CancellationToken ct = default);
         Task<TaskStartResponseDto> StartByGroupsAsync(string[] groupIds, DateTime processDate, CancellationToken ct = default);
         Task<TaskStartResponseDto> StartByTasksAsync(string[] taskIds, DateTime processDate, CancellationToken ct = default);
+
+        /// <summary> 定时任务入口 </summary>
+        Task<TaskStartResponseDto> StartScheduledByTasksAsync(string[] taskIds, DateTime processDate, CancellationToken ct = default);
+
         Task<TaskStartResponseDto> StartByRangeAsync(AcquisitionConfig config, DateTime startDate, DateTime endDate, CancellationToken ct = default);
         Task<TaskStartResponseDto> StartConfigsByRangeAsync(FileConfigQueryOptions options, DateTime startDate, DateTime endDate, CancellationToken ct = default);
 

@@ -34,5 +34,7 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
 
         [StringLength(500)]
         public string Message { get; set; }
+        public string TaskCode { get; set; }
+        public string TriggerType { get; set; }
     }
 }

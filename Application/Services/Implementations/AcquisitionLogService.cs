@@ -57,6 +57,27 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 throw new InvalidOperationException("记录任务总日志失败：TaskId 必须 >= 0。");
             }
 
+            if (!string.IsNullOrWhiteSpace(entry.TaskCode))
+            {
+                entry.TaskCode = entry.TaskCode.Trim();
+
+                if (entry.TaskCode.Length > 50)
+                {
+                    throw new InvalidOperationException("记录任务总日志失败：TaskCode 长度不能超过 50。");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.TriggerType))
+            {
+                entry.TriggerType = entry.TriggerType.Trim().ToUpperInvariant();
+
+                if (entry.TriggerType != TaskTriggerTypes.Manual &&
+                    entry.TriggerType != TaskTriggerTypes.Scheduled)
+                {
+                    throw new InvalidOperationException("记录任务总日志失败：TriggerType 只能是 MAN 或 SCH。");
+                }
+            }
+
             entry.Status = NormalizeStatus(entry.Status);
             entry.ProcessedCount = entry.SuccessCount + entry.FailureCount;
             entry.Progress = CalculateProgress(entry.TotalConfigs, entry.SuccessCount, entry.FailureCount);

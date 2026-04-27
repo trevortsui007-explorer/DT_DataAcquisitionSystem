@@ -13,33 +13,41 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private readonly IDataAcquisitionService _dataAcquisitionService;
         private readonly IAcquisitionLogService _acquisitionLogService;
         private readonly IFileConfigService _fileConfigService;
+        private readonly ILogCodeGenerator _logCodeGenerator;
 
         public AcquisitionExecutionService(
             IDataAcquisitionService dataAcquisitionService,
             IAcquisitionLogService acquisitionLogService,
-            IFileConfigService fileConfigService)
+            IFileConfigService fileConfigService,
+            ILogCodeGenerator logCodeGenerator)
         {
             _dataAcquisitionService = dataAcquisitionService ?? throw new ArgumentNullException(nameof(dataAcquisitionService));
             _acquisitionLogService = acquisitionLogService ?? throw new ArgumentNullException(nameof(acquisitionLogService));
             _fileConfigService = fileConfigService ?? throw new ArgumentNullException(nameof(fileConfigService));
+            _logCodeGenerator = logCodeGenerator ?? throw new ArgumentNullException(nameof(logCodeGenerator));
         }
 
         public async Task<TaskStartResponseDto> StartByIdsAsync(string[] ids, DateTime processDate, CancellationToken ct = default)
         {
             var configs = await GetConfigsByIdsAsync(ids, ct).ConfigureAwait(false);
-            return await StartBatchAsync(configs, processDate.Date, processDate.Date, "采集任务已启动。", ct).ConfigureAwait(false);
+            return await StartBatchAsync(configs, processDate.Date, processDate.Date, TaskTriggerTypes.Manual, "采集任务已启动。", ct).ConfigureAwait(false);
         }
 
         public async Task<TaskStartResponseDto> StartByGroupsAsync(string[] groupIds, DateTime processDate, CancellationToken ct = default)
         {
             var configs = await GetConfigsByGroupIdsAsync(groupIds, ct).ConfigureAwait(false);
-            return await StartBatchAsync(configs, processDate.Date, processDate.Date, "分组采集任务已启动。", ct).ConfigureAwait(false);
+            return await StartBatchAsync(configs, processDate.Date, processDate.Date, TaskTriggerTypes.Manual, "分组采集任务已启动。", ct).ConfigureAwait(false);
         }
 
         public async Task<TaskStartResponseDto> StartByTasksAsync(string[] taskIds, DateTime processDate, CancellationToken ct = default)
         {
             var configs = await GetConfigsByTaskIdsAsync(taskIds, ct).ConfigureAwait(false);
-            return await StartBatchAsync(configs, processDate.Date, processDate.Date, "计划任务采集已启动。", ct).ConfigureAwait(false);
+            return await StartBatchAsync(configs, processDate.Date, processDate.Date, TaskTriggerTypes.Manual, "计划任务采集已启动。", ct).ConfigureAwait(false);
+        }
+        public async Task<TaskStartResponseDto> StartScheduledByTasksAsync(string[] taskIds, DateTime processDate, CancellationToken ct = default)
+        {
+            var configs = await GetConfigsByTaskIdsAsync(taskIds, ct).ConfigureAwait(false);
+            return await StartBatchAsync(configs, processDate.Date, processDate.Date, TaskTriggerTypes.Scheduled, "计划任务采集已启动。", ct).ConfigureAwait(false);
         }
 
         public async Task<TaskStartResponseDto> StartByRangeAsync(AcquisitionConfig config, DateTime startDate, DateTime endDate, CancellationToken ct = default)
@@ -49,7 +57,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             ValidateDateRange(startDate, endDate);
 
             var configs = new List<AcquisitionConfig> { config };
-            return await StartBatchAsync(configs, startDate.Date, endDate.Date, "区间采集任务已启动。", ct).ConfigureAwait(false);
+            return await StartBatchAsync(configs, startDate.Date, endDate.Date, TaskTriggerTypes.Manual, "区间采集任务已启动。", ct).ConfigureAwait(false);
         }
 
         public async Task<TaskStartResponseDto> StartConfigsByRangeAsync(FileConfigQueryOptions options, DateTime startDate, DateTime endDate, CancellationToken ct = default)
@@ -57,7 +65,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             ValidateDateRange(startDate, endDate);
 
             var configs = await GetConfigsByOptionsAsync(options, ct).ConfigureAwait(false);
-            return await StartBatchAsync(configs, startDate.Date, endDate.Date, "批量区间采集任务已启动。", ct).ConfigureAwait(false);
+            return await StartBatchAsync(configs, startDate.Date, endDate.Date, TaskTriggerTypes.Manual, "批量区间采集任务已启动。", ct).ConfigureAwait(false);
         }
 
         public async Task<TaskStatusDto> GetTaskStatusAsync(string taskLogId, CancellationToken ct = default)
@@ -74,6 +82,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return new TaskStatusDto
             {
                 TaskLogId = taskLog.Id,
+                TaskCode = taskLog.TaskCode,
+                TriggerType = taskLog.TriggerType,
                 Status = taskLog.Status,
                 TotalConfigs = taskLog.TotalConfigs,
                 SuccessCount = taskLog.SuccessCount,
@@ -141,6 +151,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 {
                     TaskLogId = x.Id,
                     TaskId = x.TaskId,
+                    TaskCode = x.TaskCode,
+                    TriggerType = x.TriggerType,
                     Status = x.Status,
                     TotalConfigs = x.TotalConfigs,
                     SuccessCount = x.SuccessCount,
@@ -166,6 +178,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             List<AcquisitionConfig> configs,
             DateTime startDate,
             DateTime endDate,
+            string triggerType,
             string successMessage,
             CancellationToken ct)
         {
@@ -183,19 +196,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
             int totalCount = configs.Count * ((endDate.Date - startDate.Date).Days + 1);
 
-            var taskLogEntry = new AcquisitionTaskLogEntry
-            {
-                TaskId = 0,
-                StartTime = DateTime.Now,
-                EndTime = null,
-                Status = "Running",
-                TotalConfigs = totalCount,
-                SuccessCount = 0,
-                FailureCount = 0,
-                ProcessedCount = 0,
-                Progress = 0,
-                Message = "任务已创建，等待执行。"
-            };
+            var taskLogEntry = await CreateRunningTaskLogAsync(
+                totalCount,
+                triggerType,
+                "任务已创建，等待执行。",
+                ct).ConfigureAwait(false);
 
             string taskLogId = await _acquisitionLogService.RecordTaskLogEntryAsync(taskLogEntry, ct).ConfigureAwait(false);
 
@@ -230,6 +235,27 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 TaskLogId = taskLogId,
                 Status = "Running",
                 Message = successMessage
+            };
+        }
+
+        private async Task<AcquisitionTaskLogEntry> CreateRunningTaskLogAsync(int totalCount, string triggerType, string message, CancellationToken ct)
+        {
+            var taskCode = await _logCodeGenerator.GenerateTaskCodeAsync(triggerType, ct).ConfigureAwait(false);
+
+            return new AcquisitionTaskLogEntry
+            {
+                TaskId = 0,
+                TaskCode = taskCode,
+                TriggerType = triggerType,
+                StartTime = DateTime.Now,
+                EndTime = null,
+                Status = "Running",
+                TotalConfigs = totalCount,
+                SuccessCount = 0,
+                FailureCount = 0,
+                ProcessedCount = 0,
+                Progress = 0,
+                Message = message
             };
         }
 

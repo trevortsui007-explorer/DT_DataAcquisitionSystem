@@ -5,6 +5,8 @@ namespace DT_DataAcquisitionSystem.Application.DTOs
     public class TaskStatusDto
     {
         public string TaskLogId { get; set; }
+        public string TaskCode { get; set; }
+        public string TriggerType { get; set; }
         public string Status { get; set; }
 
         public int TotalConfigs { get; set; }
