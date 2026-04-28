@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using DT_DataAcquisitionSystem.Domain.Entities;
+using Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.Application.DTOs;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
@@ -40,5 +41,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
         /// <summary> 获取符合筛选条件的采集任务日志总数 </summary>
         Task<int> GetTaskLogsCountAsync(string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default);
+
+        /// <summary> Dashboard 按时间范围读取任务总日志。</summary>
+        Task<List<DashboardTaskLogDto>> GetDashboardTaskLogsAsync(DateTime startTime, DateTime endTime, int? limit = null);
     }
 }

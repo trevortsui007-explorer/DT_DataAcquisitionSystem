@@ -10,6 +10,7 @@ using Dapper;
 using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using Microsoft.Practices.Unity;
+using Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.Application.DTOs;
 
 namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
 {
@@ -335,6 +336,52 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     StartTime = startTime,
                     EndTime = endTime
                 });
+            }
+        }
+
+        /// <summary>
+        /// Dashboard 按时间范围读取任务总日志。
+        /// </summary>
+        public async Task<List<DashboardTaskLogDto>> GetDashboardTaskLogsAsync(DateTime startTime, DateTime endTime, int? limit = null)
+        {
+            if (endTime <= startTime)
+            {
+                return new List<DashboardTaskLogDto>();
+            }
+
+            const string sql = @"
+                SELECT
+                    [StartTime],
+                    CAST([TaskId] AS NVARCHAR(50)) AS [TaskId],
+                    [Status],
+                    [Message],
+                    [ProcessedCount],
+                    [SuccessCount],
+                    [FailureCount]
+                FROM [dbo].[DA_AcquisitionTaskLog]
+                WHERE [StartTime] >= @StartTime
+                  AND [StartTime] < @EndTime
+                ORDER BY [StartTime] DESC, [Id] DESC
+                OFFSET 0 ROWS FETCH NEXT @Take ROWS ONLY;";
+
+            int take = (limit.HasValue && limit.Value > 0) ? limit.Value : 1000000;
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync().ConfigureAwait(false);
+
+                var result = await conn.QueryAsync<DashboardTaskLogDto>(
+                    new CommandDefinition(
+                        sql,
+                        new
+                        {
+                            StartTime = startTime,
+                            EndTime = endTime,
+                            Take = take
+                        }))
+                    .ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<DashboardTaskLogDto>();
             }
         }
     }
