@@ -40,7 +40,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 nextValue = await conn.ExecuteScalarAsync<int>(
-                    sql: "dbo.sp_GetNextTaskCodeSeed",
+                    sql: "dbo.pr_DA_GetNextTaskCodeSeed",
                     param: new
                     {
                         SeedDate = seedDate

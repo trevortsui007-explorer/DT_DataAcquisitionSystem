@@ -230,6 +230,15 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     }
                 }
 
+                // 判断文件数量
+                if (targetFiles.Count == 0)
+                {
+                    throw new FileNotFoundException($"未找到可处理文件: {path}");
+                }
+
+                int failedFileCount = 0;
+                List<string> errorMessages = new List<string>();
+
                 // 3. 遍历处理所有目标文件
                 foreach (var filePath in targetFiles)
                 {
@@ -242,8 +251,15 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     {
                         // 文件夹模式下：单个文件报错不中断整个文件夹的采集
                         // 错误已经在 ProcessFileInternal 中记录到了明细日志表
+                        failedFileCount++;
+                        errorMessages.Add($"文件 {Path.GetFileName(filePath)} 处理失败: {ex.Message}");
                         Console.WriteLine($"[警告] 文件处理失败跳过: {filePath}, 原因: {ex.Message}");
                     }
+                }
+
+                if (failedFileCount > 0)
+                {
+                    throw new Exception($"配置 {config.EqName} 在 {processDate:yyyy-MM-dd} 处理失败，失败文件数：{failedFileCount}。{string.Join("；", errorMessages)}");   
                 }
             }
             finally
@@ -427,13 +443,32 @@ namespace DT_DataAcquisitionSystem.Application.Services
             else
                 finalStatus = "NoData";
 
+            string finalMessage;
+
+            if (finalStatus == "Success")
+            {
+                finalMessage = "任务完成";
+            }
+            else if (finalStatus == "Failed")
+            {
+                finalMessage = $"任务完成，但全部失败。失败数：{summary.FailureCount}";
+            }
+            else if (finalStatus == "PartialSuccess")
+            {
+                finalMessage = $"任务完成，部分失败。成功数：{summary.SuccessCount}，失败数：{summary.FailureCount}";
+            }
+            else
+            {
+                finalMessage = "没有可执行的数据。";
+            }
+
             await _logService.CompleteTaskAsync(
                 taskLogId,
                 finalStatus,
                 totalCount,
                 summary.SuccessCount,
                 summary.FailureCount,
-                "任务完成",
+                finalMessage,
                 ct
             ).ConfigureAwait(false);
 

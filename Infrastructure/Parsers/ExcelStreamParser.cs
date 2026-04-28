@@ -20,7 +20,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure
             var result = new List<T>();
 
             // NPOI 自动识别 .xls 和 .xlsx
-            var workbook = WorkbookFactory.Create(stream)
+            var workbook = WorkbookFactory.Create(stream);
             try
             {
                 ISheet sheet = GetSheet(workbook, opt.SheetName);
