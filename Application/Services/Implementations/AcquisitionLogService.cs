@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
+using Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.Application.DTOs;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
@@ -247,6 +248,18 @@ namespace DT_DataAcquisitionSystem.Application.Services
             if (progress > 100) return 100;
 
             return progress;
+        }
+
+        /// <summary>
+        /// Dashboard 按时间范围读取任务总日志。
+        /// </summary>
+        public async Task<List<DashboardTaskLogDto>> GetDashboardTaskLogsAsync(DateTime startTime, DateTime endTime, int? limit = null)
+        {
+            if (endTime <= startTime)
+            {
+                return new List<DashboardTaskLogDto>();
+            }
+            return await _logRepo.GetDashboardTaskLogsAsync(startTime, endTime, limit);
         }
     }
 }

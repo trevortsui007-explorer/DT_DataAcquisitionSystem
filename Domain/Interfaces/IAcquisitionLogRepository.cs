@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using DT_DataAcquisitionSystem.Domain.Entities;
+using Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.Application.DTOs;
 
 namespace DT_DataAcquisitionSystem.Domain.Interfaces
 {
@@ -52,5 +53,14 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
         /// 获取采集任务日志总数（用于分页计数）
         /// </summary>
         Task<int> GetTaskLogsCountAsync(string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default);
+
+        /// <summary>
+        /// Dashboard 按时间范围读取任务总日志。
+        /// </summary>
+        /// <param name="startTime">开始时间，包含。</param>
+        /// <param name="endTime">结束时间，不包含。</param>
+        /// <param name="limit">限制条数；为空表示不限制。</param>
+        /// <returns>任务日志列表。</returns>
+        Task<List<DashboardTaskLogDto>> GetDashboardTaskLogsAsync(DateTime startTime, DateTime endTime, int? limit = null);
     }
 }
