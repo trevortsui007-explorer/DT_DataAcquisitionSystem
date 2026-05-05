@@ -58,7 +58,22 @@ namespace DT_DataAcquisitionSystem.Common.Extensions
 
         public static bool GetBool(this NancyModule module, string key)
         {
-            string val = (module.Request.Form[key] ?? module.Request.Query[key] ?? "false").ToString().ToLower();
+            var formValue = module.Request.Form[key];
+            var queryValue = module.Request.Query[key];
+
+            string val = null;
+
+            if (formValue != null && formValue.HasValue)
+            {
+                val = formValue.Value.ToString();
+            }
+            else if (queryValue != null && queryValue.HasValue)
+            {
+                val = queryValue.Value.ToString();
+            }
+
+            val = (val ?? "false").Trim().ToLower();
+
             return val == "true" || val == "1";
         }
 
