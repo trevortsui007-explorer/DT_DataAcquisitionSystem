@@ -160,14 +160,16 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
         {
             string sql = $@"
                 INSERT INTO [{tableName}](
-                    [EqName],[TableName],[FilePathPattern],[FileNamePattern],[FileType],
-                    [HeaderRow],[StartRow],[FieldMappings],[IsEnabled],
-                    [PostProcessingType],[ProcedureName],[ServiceName],[Flag],[FlagName]
+                    [EqName], [TableName], [FilePathPattern], [FileNamePattern], [FileType],
+                    [HeaderRow], [StartRow], [FieldMappings], [ExtFields], [IsEnabled],
+                    [PostProcessingType], [PostTableName], [ProcedureName], [ServiceName], 
+                    [Flag], [FlagName], [CreateTime]
                 )
                 VALUES(
-                    @EqName,@TableName,@FilePathPattern,@FileNamePattern,@FileType,
-                    @HeaderRow,@StartRow,@FieldMappings,@IsEnabled,
-                    @PostProcessingType,@ProcedureName,@ServiceName,@Flag,@FlagName
+                    @EqName, @TableName, @FilePathPattern, @FileNamePattern, @FileType,
+                    @HeaderRow, @StartRow, @FieldMappings, @ExtFields, @IsEnabled,
+                    @PostProcessingType, @PostTableName, @ProcedureName, @ServiceName, 
+                    @Flag, @FlagName, GETDATE()
                 );
                 SELECT SCOPE_IDENTITY();";
 
@@ -183,7 +185,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
         {
             string sql = $@"
                 UPDATE [{tableName}]
-                SET
+                SET 
                     EqName = @EqName,
                     TableName = @TableName,
                     FilePathPattern = @FilePathPattern,
@@ -192,8 +194,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     HeaderRow = @HeaderRow,
                     StartRow = @StartRow,
                     FieldMappings = @FieldMappings,
+                    ExtFields = @ExtFields, 
                     IsEnabled = @IsEnabled,
                     PostProcessingType = @PostProcessingType,
+                    PostTableName = @PostTableName, 
                     ProcedureName = @ProcedureName,
                     ServiceName = @ServiceName,
                     Flag = @Flag,
