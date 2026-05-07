@@ -1,4 +1,5 @@
-﻿using DT_DataAcquisitionSystem.Domain.Entities;
+﻿using DT_DataAcquisitionSystem.Application.DTOs;
+using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using System;
 using System.Collections.Generic;
@@ -28,36 +29,65 @@ namespace DT_DataAcquisitionSystem.Application.Services
         #region 查询操作 (Read)
 
         /// <summary>
-        /// 获取所有采集任务列表。
+        /// 获取所有采集任务列表，包含关联配置组信息。
         /// </summary>
-        public IEnumerable<AcquisitionTask> GetList(string tableName = null, string dbName = null)
+        public IEnumerable<AcquisitionTaskDto> GetList(string tableName = null, string dbName = null)
         {
-            return _repository.GetList(tableName, dbName);
+            tableName = string.IsNullOrEmpty(tableName) ? "DA_AcquisitionTask" : tableName;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
+            return _repository.GetListWithGroups(
+                tableName: tableName,
+                linkTable: "DA_AcquisitionTask_Group",
+                groupTable: "DA_AcquisitionGroup",
+                groupConfigLinkTable: "DA_AcquisitionGroup_Config",
+                databaseName: dbName
+            );
         }
 
         /// <summary>
-        /// 根据主键 ID 获取单个采集任务。
+        /// 根据主键 ID 获取单个采集任务，包含关联配置组信息。
         /// </summary>
-        public AcquisitionTask GetById(string id, string tableName = null, string dbName = null)
+        public AcquisitionTaskDto GetById(string id, string tableName = null, string dbName = null)
         {
             if (string.IsNullOrEmpty(id)) return null;
-            return _repository.GetById(id, tableName, dbName);
+
+            tableName = string.IsNullOrEmpty(tableName) ? "DA_AcquisitionTask" : tableName;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
+            return _repository.GetByIdWithGroups(
+                id: id,
+                tableName: tableName,
+                linkTable: "DA_AcquisitionTask_Group",
+                groupTable: "DA_AcquisitionGroup",
+                groupConfigLinkTable: "DA_AcquisitionGroup_Config",
+                databaseName: dbName
+            );
         }
 
         /// <summary>
         /// 根据 ID 数组批量获取采集任务。
+        /// 这里仍然返回实体，主要用于内部调度或兼容旧逻辑。
         /// </summary>
         public IEnumerable<AcquisitionTask> GetByIds(string[] ids, string tableName = null, string dbName = null)
         {
             if (ids == null || ids.Length == 0) return Enumerable.Empty<AcquisitionTask>();
+
+            tableName = string.IsNullOrEmpty(tableName) ? "DA_AcquisitionTask" : tableName;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
             return _repository.GetListByIds(ids, tableName, dbName);
         }
 
         /// <summary>
         /// 根据任务模式筛选采集任务。
+        /// 这里仍然返回实体，避免影响 Hangfire 初始化逻辑。
         /// </summary>
         public IEnumerable<AcquisitionTask> GetByMode(int taskMode, string tableName = null, string dbName = null)
         {
+            tableName = string.IsNullOrEmpty(tableName) ? "DA_AcquisitionTask" : tableName;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
             return _repository.GetListByMode(taskMode, tableName, dbName);
         }
 
@@ -66,6 +96,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// </summary>
         public IEnumerable<int> GetAssociatedGroupIds(int taskId, string linkTable = null, string dbName = null)
         {
+            linkTable = string.IsNullOrEmpty(linkTable) ? "DA_AcquisitionTask_Group" : linkTable;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
             return _repository.GetGroupIdsByTaskId(taskId, linkTable, dbName);
         }
 
@@ -80,6 +113,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
         {
             if (entity == null) throw new ArgumentNullException(nameof(entity));
 
+            tableName = string.IsNullOrEmpty(tableName) ? "DA_AcquisitionTask" : tableName;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
             entity.CreateTime = DateTime.Now;
             entity.UpdateTime = DateTime.Now;
 
@@ -93,16 +129,25 @@ namespace DT_DataAcquisitionSystem.Application.Services
         {
             if (entity == null || entity.Id <= 0) return false;
 
+            tableName = string.IsNullOrEmpty(tableName) ? "DA_AcquisitionTask" : tableName;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
             entity.UpdateTime = DateTime.Now;
+
             return _repository.Update(entity, tableName, dbName);
         }
 
         /// <summary>
         /// 批量删除指定的采集任务。
+        /// Repository 内部会先删除 DA_AcquisitionTask_Group 关联关系。
         /// </summary>
         public bool DeleteTasks(string[] ids, string tableName = null, string dbName = null)
         {
             if (ids == null || ids.Length == 0) return false;
+
+            tableName = string.IsNullOrEmpty(tableName) ? "DA_AcquisitionTask" : tableName;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
             return _repository.Delete(ids, tableName, dbName);
         }
 
@@ -112,6 +157,10 @@ namespace DT_DataAcquisitionSystem.Application.Services
         public bool SetEnabledStatus(string[] ids, bool isEnabled, string tableName = null, string dbName = null)
         {
             if (ids == null || ids.Length == 0) return false;
+
+            tableName = string.IsNullOrEmpty(tableName) ? "DA_AcquisitionTask" : tableName;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
             return _repository.SetEnabled(ids, isEnabled, tableName, dbName);
         }
 
@@ -124,6 +173,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// </summary>
         public bool AssignGroupsToTask(int taskId, int[] groupIds, string linkTableName = null, string dbName = null)
         {
+            linkTableName = string.IsNullOrEmpty(linkTableName) ? "DA_AcquisitionTask_Group" : linkTableName;
+            dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
+
             using (var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled))
             {
                 try

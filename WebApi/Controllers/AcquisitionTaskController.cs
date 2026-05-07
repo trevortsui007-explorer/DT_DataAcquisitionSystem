@@ -5,7 +5,6 @@ using DT_DataAcquisitionSystem.Domain.Interfaces;
 using Nancy;
 using Nancy.ModelBinding;
 using System.Linq;
-using DT_DataAcquisitionSystem.Common.Utilities;
 
 namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Controllers
 {
@@ -57,9 +56,9 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
         private Response GetTaskList(dynamic _)
         {
             var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionTask");
-            //var data = _taskService.GetList(ctx.TableName, ctx.DatabaseName);
-            var taskService = TaskIocHelper.GetTaskService();
-            var data = taskService.GetList(ctx.TableName, ctx.DatabaseName);
+
+            var data = _taskService.GetList(ctx.TableName, ctx.DatabaseName);
+
             return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "查询成功", data);
         }
 
@@ -82,7 +81,9 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
         {
             var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionTask");
             int mode = (int)p.mode;
+
             var data = _taskService.GetByMode(mode, ctx.TableName, ctx.DatabaseName);
+
             return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "查询成功", data);
         }
 
@@ -91,9 +92,11 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
             var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionTask");
             var task = this.Bind<AcquisitionTask>();
 
-            if (task == null) return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "数据解析失败", null);
+            if (task == null)
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "数据解析失败", null);
 
             int newId = _taskService.CreateTask(task, ctx.TableName, ctx.DatabaseName);
+
             return newId > 0
                 ? this.ToResponse(NancyModuleExtensions.ResponseCode.success, "任务创建成功", newId)
                 : this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "任务创建失败", null);
@@ -104,12 +107,14 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
             var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionTask");
             var task = this.Bind<AcquisitionTask>();
 
-            if (task == null) return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "数据解析失败", null);
+            if (task == null)
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "数据解析失败", null);
 
-            // 路径 ID 覆盖实体 ID
-            if (p.id != null) task.Id = (int)p.id;
+            if (p.id != null)
+                task.Id = (int)p.id;
 
             bool success = _taskService.UpdateTask(task, ctx.TableName, ctx.DatabaseName);
+
             return success
                 ? this.ToResponse(NancyModuleExtensions.ResponseCode.success, "任务更新成功", null)
                 : this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "任务更新失败", null);
@@ -124,6 +129,7 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
                 return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "缺少待删除的任务 ids", null);
 
             bool success = _taskService.DeleteTasks(ids, ctx.TableName, ctx.DatabaseName);
+
             return success
                 ? this.ToResponse(NancyModuleExtensions.ResponseCode.success, $"成功删除 {ids.Length} 个任务", null)
                 : this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "任务删除失败", null);
@@ -139,6 +145,7 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
                 return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "缺少参数 ids", null);
 
             bool success = _taskService.SetEnabledStatus(ids, isEnabled, ctx.TableName, ctx.DatabaseName);
+
             return success
                 ? this.ToResponse(NancyModuleExtensions.ResponseCode.success, "任务状态更新成功", null)
                 : this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "任务状态更新失败", null);
@@ -157,19 +164,19 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
             int taskId = (int)p.taskId;
 
             var groupIds = _taskService.GetAssociatedGroupIds(taskId, ctx.TableName, ctx.DatabaseName);
+
             return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "查询成功", groupIds);
         }
 
         /// <summary>
         /// 批量为任务分配配置组 (全量保存)
-        /// URL: POST /api/tasks/{taskId}/groups?ids=1,2,3
+        /// URL: POST /api/data-acquisition/tasks/{taskId}/groups?ids=1,2,3
         /// </summary>
         private Response AssignGroupsToTask(dynamic p)
         {
             var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionTask_Group");
             int taskId = (int)p.taskId;
 
-            // 从 QueryString 获取选中的组 IDs
             string[] idsStr = this.GetQueryArray("ids");
             int[] groupIds = idsStr?.Select(int.Parse).ToArray() ?? new int[0];
 

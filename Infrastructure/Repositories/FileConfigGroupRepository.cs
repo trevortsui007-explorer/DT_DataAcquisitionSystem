@@ -22,44 +22,44 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             linkTableName = string.IsNullOrEmpty(linkTableName) ? DefaultGroupLinkTable : linkTableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
-            // Step 1：查 Group
+            // Step 1：查询 Group 列表
             string groupSql = $@"
                 SELECT 
-                    g.*, 
-                    (SELECT COUNT(*) FROM [{linkTableName}] c WHERE c.GroupId = g.Id) AS ConfigCount
+                    g.Id, g.GroupName, g.GroupCategory, g.GroupType, g.IsEnabled,
+                    (SELECT COUNT(1) FROM [{linkTableName}] c WHERE c.GroupId = g.Id) AS ConfigCount
                 FROM [{tableName}] g
-                ORDER BY g.SortOrder ASC";
+                ORDER BY g.Id ASC";
 
             var groups = this.BaseRepository(databaseName).FindList<AcquisitionGroupDto>(groupSql).ToList();
 
-            // Step 2：查 Config（扁平）
+            if (groups.Count == 0) return groups;
+
+            // Step 2：查询关联的 Config
+            var groupIds = groups.Select(x => $"'{x.Id}'");
+            string idInClause = string.Join(",", groupIds);
+
             string configSql = $@"
                 SELECT 
                     gc.GroupId,
+                    c.Id,
                     c.EqName
                 FROM [{linkTableName}] gc
-                LEFT JOIN DA_AcquisitionConfig c ON gc.ConfigId = c.Id";
+                INNER JOIN DA_AcquisitionConfig c ON gc.ConfigId = c.Id
+                WHERE gc.GroupId IN ({idInClause})";
 
             var configFlatList = this.BaseRepository(databaseName).FindList<GroupConfigFlatDto>(configSql);
 
-            // Step 3：分组（GroupId → List<AcquisitionConfigDto>）
-            var configDict = configFlatList
-                .Where(x => x.EqName != null)
-                .GroupBy(x => x.GroupId)
-                .ToDictionary(
-                    g => g.Key,
-                    g => g.Select(x => new AcquisitionConfigDto
-                    {
-                        EqName = x.EqName
-                    }).ToList()
-                );
+            // Step 3：建立映射关系
+            var configLookup = configFlatList
+                .Where(x => !string.IsNullOrEmpty(x.EqName))
+                .ToLookup(x => x.GroupId);
 
-            // Step 4：组装到 Group
+            // Step 4：回填数据
             foreach (var group in groups)
             {
-                group.AssociatedConfigs = configDict.ContainsKey(group.Id)
-                    ? configDict[group.Id]
-                    : new List<AcquisitionConfigDto>();
+                group.AssociatedConfigs = configLookup[group.Id]
+                    .Select(x => new AcquisitionConfigDto { Id = x.Id, EqName = x.EqName })
+                    .ToList();
             }
 
             return groups;
@@ -73,7 +73,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             tableName = string.IsNullOrEmpty(tableName) ? DefaultGroupTable : tableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
-            string sql = $"SELECT * FROM [{tableName}] WHERE [Id] IN @Ids ORDER BY [SortOrder] ASC";
+            string sql = $"SELECT * FROM [{tableName}] WHERE [Id] IN @Ids ORDER BY [Id] ASC";
             return this.BaseRepository(databaseName).FindList<AcquisitionGroup>(sql, new { Ids = ids });
         }
 
@@ -105,13 +105,13 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             tableName = string.IsNullOrEmpty(tableName) ? DefaultGroupTable : tableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
-            // 对应你提供的：GroupName, GroupCategory, GroupType, SortOrder, IsEnabled
+            // 对应你提供的：GroupName, GroupCategory, GroupType, IsEnabled
             string sql = $@"
                 INSERT INTO [{tableName}] (
-                    [GroupName], [GroupCategory], [GroupType], [SortOrder], [IsEnabled]
+                    [GroupName], [GroupCategory], [GroupType], [IsEnabled]
                 ) 
                 VALUES (
-                    @GroupName, @GroupCategory, @GroupType, @SortOrder, @IsEnabled
+                    @GroupName, @GroupCategory, @GroupType, @IsEnabled
                 );
                 SELECT SCOPE_IDENTITY();";
 
@@ -130,7 +130,6 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     GroupName = @GroupName, 
                     GroupCategory = @GroupCategory, 
                     GroupType = @GroupType, 
-                    SortOrder = @SortOrder,
                     IsEnabled = @IsEnabled
                 WHERE Id = @Id";
 
