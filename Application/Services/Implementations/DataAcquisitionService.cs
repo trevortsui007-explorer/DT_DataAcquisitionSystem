@@ -20,6 +20,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private readonly IFileConfigService _configService;
         private readonly IDataService _dataService;
         private readonly IAcquisitionLogService _logService;
+        private readonly IAcquisitionFileStateService _fileStateService;
         private readonly IPostProcessingService _postProcessingService;
 
         // 并发控制：防止同时处理过多任务撑爆数据库连接池
@@ -41,6 +42,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             _configService = configService;
             _dataService = dataService;
             _logService = logService;
+            _fileStateService = new AcquisitionFileStateService();
             _postProcessingService = ProcessorIocHelper.CreatePostProcessingService(dataService);
         }
 
@@ -52,7 +54,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         public async Task<AcquisitionSummary> ProcessByTask(string[] taskids, DateTime processdate, CancellationToken ct = default)
         {
             var configs = _configService.GetConfigsByTaskIds(taskids);
-            return await ExecuteBatchInternal(configs, processdate, processdate, ct);
+            return await ExecuteBatchInternal(configs, processdate, processdate, ct, ResolveManualUpdateSource(processdate, processdate));
         }
 
         /// <summary>
@@ -61,7 +63,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         public async Task<AcquisitionSummary> ProcessByGroup(string[] groupIds, DateTime processDate, CancellationToken ct = default)
         {
             var configs = _configService.GetConfigsByGroupIds(groupIds);
-            return await ExecuteBatchInternal(configs, processDate, processDate, ct);
+            return await ExecuteBatchInternal(configs, processDate, processDate, ct, ResolveManualUpdateSource(processDate, processDate));
         }
 
         /// <summary>
@@ -70,7 +72,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         public async Task<AcquisitionSummary> ProcessByIds(string[] ids, DateTime processDate, CancellationToken ct = default)
         {
             var configs = _configService.GetByIds(ids);
-            return await ExecuteBatchInternal(configs, processDate, processDate, ct);
+            return await ExecuteBatchInternal(configs, processDate, processDate, ct, ResolveManualUpdateSource(processDate, processDate));
         }
 
         /// <summary>
@@ -78,7 +80,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// </summary>
         public async Task<AcquisitionSummary> ProcessByTimeRange(AcquisitionConfig config, DateTime startDate, DateTime endDate, CancellationToken ct = default)
         {
-            return await ExecuteBatchInternal(new[] { config }, startDate, endDate, ct);
+            return await ExecuteBatchInternal(new[] { config }, startDate, endDate, ct, ResolveManualUpdateSource(startDate, endDate));
         }        
         
         /// <summary>
@@ -94,13 +96,13 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 throw new Exception("未找到匹配查询条件的任何采集配置");
             }
 
-            return await ExecuteBatchInternal(configs, startDate, endDate, ct);
+            return await ExecuteBatchInternal(configs, startDate, endDate, ct, ResolveManualUpdateSource(startDate, endDate));
         }
 
         /// <summary>
         /// 核心：任务打平并行执行器
         /// </summary>
-        private async Task<AcquisitionSummary> ExecuteBatchInternal(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, CancellationToken ct)
+        private async Task<AcquisitionSummary> ExecuteBatchInternal(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, CancellationToken ct, string updateSource)
         {
             var configList = (configs ?? Enumerable.Empty<AcquisitionConfig>()).ToList();
 
@@ -119,7 +121,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             };
             string taskLogId = await _logService.RecordTaskLogEntryAsync(taskLogEntry, ct);
 
-            return await ExecuteBatchWithTaskLogAsync(configList, start, end, taskLogId, ct).ConfigureAwait(false);
+            return await ExecuteBatchWithTaskLogAsync(configList, start, end, taskLogId, ct, updateSource).ConfigureAwait(false);
         }
 
         #endregion
@@ -194,8 +196,12 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// <summary>
         /// 处理单个配置 (支持单文件模式 和 文件夹批量模式)
         /// </summary>
-        public async Task ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, string taskLogId, CancellationToken ct = default)
+        public async Task ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, string taskLogId, CancellationToken ct = default, string updateSource = null)
         {
+            updateSource = string.IsNullOrWhiteSpace(updateSource)
+                ? ResolveManualUpdateSource(processDate, processDate)
+                : updateSource;
+
             // 并发锁：防止重复启动同一任务
             string fileKey = $"{config.Id}_{processDate:yyyyMMdd}";
             if (!_processingFiles.Add(fileKey)) return;
@@ -245,7 +251,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     try
                     {
                         // 核心：调用独立的单文件执行器
-                        await ProcessFileInternal(config, filePath, taskLogId, provider, ct);
+                        await ProcessFileInternal(config, processDate, filePath, taskLogId, provider, ct, updateSource);
                     }
                     catch (Exception ex)
                     {
@@ -272,7 +278,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// <summary>
         /// 核心执行器：处理具体的物理文件（包含断点续传、解析、入库、写日志）
         /// </summary>
-        private async Task ProcessFileInternal(AcquisitionConfig config, string filePath, string taskLogId, IFileProvider provider, CancellationToken ct)
+        private async Task ProcessFileInternal(AcquisitionConfig config, DateTime businessDate, string filePath, string taskLogId, IFileProvider provider, CancellationToken ct, string updateSource)
         {
             string actualFileName = Path.GetFileName(filePath);
             int startRow = 0;
@@ -291,6 +297,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
             try
             {
                 // 2. 防重与断点续传检查
+                if (await _fileStateService.ShouldSkipForSealedAsync(config.Id, businessDate, actualFileName, updateSource, ct).ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 startRow = await _logService.GetNextStartRowAsync(config.Id, actualFileName, ct);
                 logEntry.StartRow = startRow;
 
@@ -333,6 +344,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 logEntry.EndTime = DateTime.Now;
                 logEntry.Status = "Success";
                 await _logService.RecordLogEntryAsync(logEntry, ct);
+                await _fileStateService.UpsertSuccessAsync(config, businessDate, filePath, logEntry, updateSource, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -352,10 +364,14 @@ namespace DT_DataAcquisitionSystem.Application.Services
         #endregion
 
         #region 批量处理结合日志系统
-        public async Task<AcquisitionSummary> ExecuteBatchWithTaskLogAsync(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default)
+        public async Task<AcquisitionSummary> ExecuteBatchWithTaskLogAsync(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default, string updateSource = null, bool sealOnSuccess = false)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
                 throw new ArgumentNullException(nameof(taskLogId));
+
+            updateSource = string.IsNullOrWhiteSpace(updateSource)
+                ? ResolveManualUpdateSource(start, end)
+                : updateSource;
 
             var configList = (configs ?? Enumerable.Empty<AcquisitionConfig>()).ToList();
             var summary = new AcquisitionSummary();
@@ -390,7 +406,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         await _concurrencySemaphore.WaitAsync(ct).ConfigureAwait(false);
                         try
                         {
-                            await ProcessSingleConfig(config, targetDate, taskLogId, ct).ConfigureAwait(false);
+                            await ProcessSingleConfig(config, targetDate, taskLogId, ct, updateSource).ConfigureAwait(false);
                             Interlocked.Increment(ref summary.SuccessCount);
                         }
                         catch (Exception ex)
@@ -472,7 +488,19 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 ct
             ).ConfigureAwait(false);
 
+            if (sealOnSuccess && finalStatus == "Success")
+            {
+                await _fileStateService.SealByTaskLogAsync(taskLogId, ct).ConfigureAwait(false);
+            }
+
             return summary;
+        }
+
+        private static string ResolveManualUpdateSource(DateTime startDate, DateTime endDate)
+        {
+            return endDate.Date < DateTime.Today
+                ? FileStateUpdateSources.ManualRepair
+                : FileStateUpdateSources.ManualCurrent;
         }
         #endregion
     }

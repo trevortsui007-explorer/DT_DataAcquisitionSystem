@@ -6,7 +6,8 @@
     public enum PostProcessingType
     {
         None = 0,       // 无后处理
-        Procedure = 1,  // 使用存储过程
-        Service = 2     // 使用Service
+        Service = 1,    // 使用Service
+        Procedure = 2   // 使用存储过程
+
     }
 }

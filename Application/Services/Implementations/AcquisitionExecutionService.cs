@@ -203,6 +203,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 ct).ConfigureAwait(false);
 
             string taskLogId = await _acquisitionLogService.RecordTaskLogEntryAsync(taskLogEntry, ct).ConfigureAwait(false);
+            string updateSource = ResolveUpdateSource(triggerType, startDate, endDate);
+            bool sealOnSuccess = updateSource == FileStateUpdateSources.ScheduledD1Backfill;
 
             _ = Task.Run(async () =>
             {
@@ -213,7 +215,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         startDate,
                         endDate,
                         taskLogId,
-                        CancellationToken.None
+                        CancellationToken.None,
+                        updateSource,
+                        sealOnSuccess
                     ).ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -236,6 +240,22 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 Status = "Running",
                 Message = successMessage
             };
+        }
+
+        private static string ResolveUpdateSource(string triggerType, DateTime startDate, DateTime endDate)
+        {
+            bool isHistory = endDate.Date < DateTime.Today;
+
+            if (string.Equals(triggerType, TaskTriggerTypes.Scheduled, StringComparison.Ordinal))
+            {
+                return isHistory
+                    ? FileStateUpdateSources.ScheduledD1Backfill
+                    : FileStateUpdateSources.ScheduledCurrent;
+            }
+
+            return isHistory
+                ? FileStateUpdateSources.ManualRepair
+                : FileStateUpdateSources.ManualCurrent;
         }
 
         private async Task<AcquisitionTaskLogEntry> CreateRunningTaskLogAsync(int totalCount, string triggerType, string message, CancellationToken ct)

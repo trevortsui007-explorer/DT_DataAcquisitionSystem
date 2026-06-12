@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
+using DT_DataAcquisitionSystem.Infrastructure.Repositories;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
@@ -268,6 +269,104 @@ namespace DT_DataAcquisitionSystem.Application.Services
             if (progress > 100) return 100;
 
             return progress;
+        }
+    }
+
+    public class AcquisitionFileStateService : IAcquisitionFileStateService
+    {
+        private readonly IAcquisitionFileStateRepository _fileStateRepository;
+
+        public AcquisitionFileStateService()
+            : this(new AcquisitionFileStateRepository())
+        {
+        }
+
+        public AcquisitionFileStateService(IAcquisitionFileStateRepository fileStateRepository)
+        {
+            _fileStateRepository = fileStateRepository ?? throw new ArgumentNullException(nameof(fileStateRepository));
+        }
+
+        public async Task<bool> ShouldSkipForSealedAsync(int configId, DateTime businessDate, string fileName, string updateSource, CancellationToken ct = default)
+        {
+            if (configId <= 0 || string.IsNullOrWhiteSpace(fileName))
+            {
+                return false;
+            }
+
+            if (IsManualRepair(updateSource))
+            {
+                return false;
+            }
+
+            var state = await _fileStateRepository
+                .GetAsync(configId, businessDate.Date, fileName.Trim(), ct)
+                .ConfigureAwait(false);
+
+            return state != null && state.IsSealed;
+        }
+
+        public async Task<bool> UpsertSuccessAsync(AcquisitionConfig config, DateTime businessDate, string fullPath, AcquisitionLogEntry logEntry, string updateSource, CancellationToken ct = default)
+        {
+            if (config == null) throw new ArgumentNullException(nameof(config));
+            if (logEntry == null) throw new ArgumentNullException(nameof(logEntry));
+            if (string.IsNullOrWhiteSpace(logEntry.FileName)) throw new ArgumentNullException(nameof(logEntry.FileName));
+
+            string safeSource = NormalizeUpdateSource(updateSource);
+            int baseStartRow = config.StartRow <= 0 ? 1 : config.StartRow;
+            int dataRowCount = Math.Max(0, logEntry.StartRow - baseStartRow + logEntry.ProcessedRows);
+
+            var state = new AcquisitionFileState
+            {
+                ConfigId = config.Id,
+                BusinessDate = businessDate.Date,
+                FileName = logEntry.FileName.Trim(),
+                FullPath = string.IsNullOrWhiteSpace(fullPath) ? null : fullPath.Trim(),
+                DataRowCount = dataRowCount,
+                LastStartRow = logEntry.StartRow,
+                LastProcessedRows = logEntry.ProcessedRows,
+                LastTaskLogId = logEntry.TaskLogId,
+                LastStatus = "Success",
+                LastUpdateSource = safeSource
+            };
+
+            return await _fileStateRepository
+                .UpsertSuccessAsync(state, IsManualRepair(safeSource), ct)
+                .ConfigureAwait(false);
+        }
+
+        public Task<int> SealByTaskLogAsync(string taskLogId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+            {
+                return Task.FromResult(0);
+            }
+
+            return _fileStateRepository.SealByTaskLogAsync(taskLogId.Trim(), ct);
+        }
+
+        public Task<List<AcquisitionFileState>> GetByConfigAndDateRangeAsync(int configId, DateTime startDate, DateTime endDate, CancellationToken ct = default)
+        {
+            if (configId <= 0)
+            {
+                return Task.FromResult(new List<AcquisitionFileState>());
+            }
+
+            return _fileStateRepository.GetByConfigAndDateRangeAsync(configId, startDate.Date, endDate.Date, ct);
+        }
+
+        private static string NormalizeUpdateSource(string updateSource)
+        {
+            return string.IsNullOrWhiteSpace(updateSource)
+                ? FileStateUpdateSources.ManualCurrent
+                : updateSource.Trim().ToUpperInvariant();
+        }
+
+        private static bool IsManualRepair(string updateSource)
+        {
+            return string.Equals(
+                NormalizeUpdateSource(updateSource),
+                FileStateUpdateSources.ManualRepair,
+                StringComparison.Ordinal);
         }
     }
 }

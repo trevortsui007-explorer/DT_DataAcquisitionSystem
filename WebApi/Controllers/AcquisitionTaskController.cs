@@ -4,6 +4,7 @@ using DT_DataAcquisitionSystem.Common.Extensions;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using Nancy;
 using Nancy.ModelBinding;
+using System;
 using System.Linq;
 
 namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Controllers
@@ -89,17 +90,24 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
 
         private Response CreateTask(dynamic _)
         {
-            var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionTask");
-            var task = this.Bind<AcquisitionTask>();
+            try
+            {
+                var ctx = NancyModuleExtensions.GetQueryContext(this, "DA_AcquisitionTask");
+                var task = this.Bind<AcquisitionTask>();
 
-            if (task == null)
-                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "数据解析失败", null);
+                if (task == null)
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "数据解析失败", null);
 
-            int newId = _taskService.CreateTask(task, ctx.TableName, ctx.DatabaseName);
+                int newId = _taskService.CreateTask(task, ctx.TableName, ctx.DatabaseName);
 
-            return newId > 0
-                ? this.ToResponse(NancyModuleExtensions.ResponseCode.success, "任务创建成功", newId)
-                : this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "任务创建失败", null);
+                return newId > 0
+                    ? this.ToResponse(NancyModuleExtensions.ResponseCode.success, "任务创建成功", newId)
+                    : this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "任务创建失败", null);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, $"任务创建失败：{ex.Message}", null);
+            }
         }
 
         private Response UpdateTask(dynamic p)

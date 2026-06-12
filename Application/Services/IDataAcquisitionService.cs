@@ -29,10 +29,10 @@ namespace DT_DataAcquisitionSystem.Application.Services
         Task<Response> ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, CancellationToken ct = default);
 
         // 单个配置单日执行（带 taskLogId，用于写明细日志）
-        Task ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, string taskLogId, CancellationToken ct = default);
+        Task ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, string taskLogId, CancellationToken ct = default, string updateSource = null);
 
 
         // 执行器外部已创建 taskLogId，由这里负责真正批量执行并实时更新进度
-        Task<AcquisitionSummary> ExecuteBatchWithTaskLogAsync(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default);
+        Task<AcquisitionSummary> ExecuteBatchWithTaskLogAsync(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default, string updateSource = null, bool sealOnSuccess = false);
     }
 }

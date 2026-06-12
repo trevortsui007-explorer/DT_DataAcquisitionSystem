@@ -13,10 +13,12 @@ namespace DT_DataAcquisitionSystem.Application.Services
     public class FileDiscoveryService
     {
         private readonly IFileProviderFactory _factory;
+        private readonly IAcquisitionFileStateService _fileStateService;
 
         public FileDiscoveryService()
         {
             _factory = FileIocHelper.GetFileProviderFactory();
+            _fileStateService = new AcquisitionFileStateService();
         }
 
         /// <summary>
@@ -55,36 +57,26 @@ namespace DT_DataAcquisitionSystem.Application.Services
             if (config == null) throw new ArgumentNullException(nameof(config));
             
             var resultList = new List<FileDiscoveryDto>();
+            var fileStates = await _fileStateService
+                .GetByConfigAndDateRangeAsync(config.Id, startDate, endDate)
+                .ConfigureAwait(false);
+            var fileStateMap = fileStates
+                .GroupBy(x => BuildStateKey(x.BusinessDate, x.FileName))
+                .ToDictionary(x => x.Key, x => x.OrderByDescending(s => s.UpdateTime).First());
 
-            // 1. 按月循环，优化扫描效率
+            var folderFilesCache = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+
+            // 1. 按月组织返回结构，按实际解析出的目录路径缓存扫描结果
             for (var monthDate = new DateTime(startDate.Year, startDate.Month, 1); 
                  monthDate <= endDate; 
                  monthDate = monthDate.AddMonths(1))
             {
-                // 解析当月文件夹物理路径
-                string actualFolderPath = FileDateTimeUtil.GetDateTimeFromBrace(config.FilePathPattern, monthDate);
-                
                 var monthDto = new FileDiscoveryDto
                 {
                     MonthName = monthDate.ToString("yyyy-MM"),
-                    FolderPath = actualFolderPath,
+                    FolderPath = string.Empty,
                     Files = new List<FileEntryDto>()
                 };
-
-                IEnumerable<string> existingFiles = new List<string>();
-                bool folderExists = true;
-
-                try
-                {
-                    // 获取 Provider 并拉取全量文件名清单 (避免在日循环里反复请求网络)
-                    var provider = _factory.Create(actualFolderPath, user, pass);
-                    existingFiles = await provider.GetFileNamesAsync(actualFolderPath, "*");
-                }
-                catch
-                {
-                    // 如果文件夹不存在或无法访问，标记该月所有文件为缺失
-                    folderExists = false;
-                }
 
                 // 2. 迭代该月内的每一天进行比对
                 int daysInMonth = DateTime.DaysInMonth(monthDate.Year, monthDate.Month);
@@ -95,24 +87,46 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     // 过滤不在查询范围内的日期
                     if (currentDay.Date < startDate.Date || currentDay.Date > endDate.Date) continue;
 
+                    // 路径模板可能包含 {dd}/{d}，必须用当天日期解析目录。
+                    string actualFolderPath = FileDateTimeUtil.GetDateTimeFromBrace(config.FilePathPattern, currentDay);
+                    if (string.IsNullOrEmpty(monthDto.FolderPath))
+                    {
+                        monthDto.FolderPath = actualFolderPath;
+                    }
+
+                    string folderCacheKey = actualFolderPath ?? string.Empty;
+                    if (!folderFilesCache.TryGetValue(folderCacheKey, out IEnumerable<string> existingFiles))
+                    {
+                        try
+                        {
+                            var provider = _factory.Create(actualFolderPath, user, pass);
+                            existingFiles = await provider.GetFileNamesAsync(actualFolderPath, "*");
+                        }
+                        catch
+                        {
+                            // 如果文件夹不存在或无法访问，标记当天文件为缺失。
+                            existingFiles = Enumerable.Empty<string>();
+                        }
+
+                        folderFilesCache[folderCacheKey] = existingFiles;
+                    }
+
                     // 根据模板生成预期的文件名关键特征
                     string expectedFileName = FileDateTimeUtil.GetProcessedFileName(config, currentDay);
-                    string searchKey = expectedFileName.Replace("*", "");
 
                     // 获取配置中的后缀 (假设属性名为 config.FileExtension，如 ".csv")
-                    string extension = config.FileType ?? "";
+                    string extension = NormalizeExtension(config.FileType);
+                    string expectedName = NormalizeExpectedFileName(expectedFileName, extension);
 
                     // 3. 在文件清单中查找匹配项：包含关键字 且 以指定后缀结尾
                     var matches = existingFiles
                         .Where(f => {
                             // 1. 先校验后缀
-                            if (!f.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) return false;
+                            string actualFileName = Path.GetFileName(f);
+                            if (!HasExpectedExtension(actualFileName, extension)) return false;
 
-                            // 2. 核心：确保文件名去掉后缀后，与预期文件名完全一致
-                            string fileNameWithoutExt = Path.GetFileNameWithoutExtension(f);
-                            string expectedWithoutStar = expectedFileName.Replace("*", "");
-
-                            return fileNameWithoutExt.Equals(expectedWithoutStar, StringComparison.OrdinalIgnoreCase);
+                            // 2. 核心：确保实际文件名与预期文件名完全一致
+                            return actualFileName.Equals(expectedName, StringComparison.OrdinalIgnoreCase);
                         })
                         .ToList();
 
@@ -121,25 +135,31 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         // 发现文件：添加到 DTO
                         foreach (var fileName in matches)
                         {
-                            monthDto.Files.Add(new FileEntryDto
+                            var entry = new FileEntryDto
                             {
                                 FileName = fileName,
                                 FullPath = CombinePath(actualFolderPath, fileName),
                                 DetectedDate = currentDay,
                                 IsMissing = false
-                            });
+                            };
+
+                            AttachFileState(entry, fileStateMap);
+                            monthDto.Files.Add(entry);
                         }
                     }
                     else
                     {
                         // 未发现文件：标记缺失项
-                        monthDto.Files.Add(new FileEntryDto
+                        var entry = new FileEntryDto
                         {
-                            FileName = expectedFileName, // 展示预期的文件名
-                            FullPath = CombinePath(actualFolderPath, expectedFileName),
+                            FileName = expectedName, // 展示预期的文件名
+                            FullPath = CombinePath(actualFolderPath, expectedName),
                             DetectedDate = currentDay,
                             IsMissing = true
-                        });
+                        };
+
+                        AttachFileState(entry, fileStateMap);
+                        monthDto.Files.Add(entry);
                     }
                 }
 
@@ -160,6 +180,60 @@ namespace DT_DataAcquisitionSystem.Application.Services
         {
             if (string.IsNullOrEmpty(folder)) return file;
             return folder.TrimEnd('/', '\\') + "/" + file.TrimStart('/', '\\');
+        }
+
+        private string NormalizeExtension(string extension)
+        {
+            if (string.IsNullOrWhiteSpace(extension)) return string.Empty;
+
+            extension = extension.Trim();
+            return extension.StartsWith(".") ? extension : "." + extension;
+        }
+
+        private string NormalizeExpectedFileName(string expectedFileName, string extension)
+        {
+            string expectedName = Path.GetFileName((expectedFileName ?? string.Empty).Replace("*", ""));
+
+            if (!string.IsNullOrEmpty(extension) &&
+                !expectedName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+            {
+                expectedName += extension;
+            }
+
+            return expectedName;
+        }
+
+        private bool HasExpectedExtension(string fileName, string extension)
+        {
+            return string.IsNullOrEmpty(extension) ||
+                fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void AttachFileState(FileEntryDto entry, Dictionary<string, AcquisitionFileState> fileStateMap)
+        {
+            if (entry == null || fileStateMap == null)
+            {
+                return;
+            }
+
+            if (!fileStateMap.TryGetValue(BuildStateKey(entry.DetectedDate, entry.FileName), out var state))
+            {
+                return;
+            }
+
+            entry.DataRowCount = state.DataRowCount;
+            entry.LastStartRow = state.LastStartRow;
+            entry.LastProcessedRows = state.LastProcessedRows;
+            entry.LastStatus = state.LastStatus;
+            entry.LastUpdateSource = state.LastUpdateSource;
+            entry.IsSealed = state.IsSealed;
+            entry.LastScanTime = state.LastScanTime;
+            entry.FileStateUpdateTime = state.UpdateTime;
+        }
+
+        private string BuildStateKey(DateTime businessDate, string fileName)
+        {
+            return $"{businessDate:yyyyMMdd}|{(fileName ?? string.Empty).Trim().ToUpperInvariant()}";
         }
     }
 }

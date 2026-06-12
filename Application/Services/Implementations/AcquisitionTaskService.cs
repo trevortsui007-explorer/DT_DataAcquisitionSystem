@@ -3,9 +3,7 @@ using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Linq;
-using System.Transactions;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
@@ -169,40 +167,35 @@ namespace DT_DataAcquisitionSystem.Application.Services
         #region 关联操作 (任务 - 配置组)
 
         /// <summary>
-        /// 重新分配任务与配置组的关系（先删后增，含事务与性能优化）。
+        /// 重新分配任务与配置组的关系（先删后增）。
         /// </summary>
         public bool AssignGroupsToTask(int taskId, int[] groupIds, string linkTableName = null, string dbName = null)
         {
+            if (taskId <= 0) return false;
+
             linkTableName = string.IsNullOrEmpty(linkTableName) ? "DA_AcquisitionTask_Group" : linkTableName;
             dbName = string.IsNullOrEmpty(dbName) ? "BaseDb" : dbName;
 
-            using (var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled))
+            try
             {
-                try
+                bool removed = _repository.RemoveAllGroups(taskId, linkTableName, dbName);
+                if (!removed) return false;
+
+                var distinctGroupIds = groupIds?
+                    .Where(id => id > 0)
+                    .Distinct()
+                    .ToArray();
+
+                if (distinctGroupIds == null || distinctGroupIds.Length == 0)
                 {
-                    _repository.RemoveAllGroups(taskId, linkTableName, dbName);
-
-                    if (groupIds != null && groupIds.Length > 0)
-                    {
-                        DataTable dt = new DataTable();
-                        dt.Columns.Add("TaskId", typeof(int));
-                        dt.Columns.Add("GroupId", typeof(int));
-
-                        foreach (var gid in groupIds)
-                        {
-                            dt.Rows.Add(taskId, gid);
-                        }
-
-                        _dataService.BulkInsertAsync(dt, linkTableName).GetAwaiter().GetResult();
-                    }
-
-                    scope.Complete();
                     return true;
                 }
-                catch
-                {
-                    return false;
-                }
+
+                return _repository.AddToGroups(taskId, distinctGroupIds, linkTableName, dbName);
+            }
+            catch
+            {
+                return false;
             }
         }
 

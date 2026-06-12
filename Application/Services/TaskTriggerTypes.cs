@@ -15,4 +15,15 @@
         /// </summary>
         public const string Scheduled = "SCH";
     }
+
+    /// <summary>
+    /// 文件状态表更新来源。
+    /// </summary>
+    public static class FileStateUpdateSources
+    {
+        public const string ScheduledCurrent = "SCH_CURRENT";
+        public const string ScheduledD1Backfill = "SCH_D1_BACKFILL";
+        public const string ManualCurrent = "MAN_CURRENT";
+        public const string ManualRepair = "MAN_REPAIR";
+    }
 }

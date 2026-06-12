@@ -37,4 +37,50 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
 
         public string ErrorMessage { get; set; }
     }
+
+    /// <summary>
+    /// 文件采集状态快照表：记录单个业务日期文件的当前行数和水位。
+    /// </summary>
+    [Table("DA_AcquisitionFileState", Schema = "dbo")]
+    public class AcquisitionFileState
+    {
+        [Key]
+        [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+        public long Id { get; set; }
+
+        public int ConfigId { get; set; }
+
+        public DateTime BusinessDate { get; set; }
+
+        [StringLength(500)]
+        public string FileName { get; set; }
+
+        [StringLength(1000)]
+        public string FullPath { get; set; }
+
+        public int DataRowCount { get; set; }
+
+        public int LastStartRow { get; set; }
+
+        public int LastProcessedRows { get; set; }
+
+        [StringLength(50)]
+        public string LastTaskLogId { get; set; }
+
+        [StringLength(50)]
+        public string LastStatus { get; set; }
+
+        [StringLength(50)]
+        public string LastUpdateSource { get; set; }
+
+        public bool IsSealed { get; set; }
+
+        public DateTime? SealTime { get; set; }
+
+        public DateTime? LastScanTime { get; set; }
+
+        public DateTime CreateTime { get; set; }
+
+        public DateTime UpdateTime { get; set; }
+    }
 }

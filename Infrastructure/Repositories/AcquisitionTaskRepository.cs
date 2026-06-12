@@ -179,11 +179,11 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             string sql = $@"
                 INSERT INTO [{tableName}] (
                     [TaskName], [TaskMode], [CronExpression], [IsEnabled], [Description], [CreateTime], [UpdateTime]
-                ) 
+                )
+                OUTPUT INSERTED.[Id]
                 VALUES (
                     @TaskName, @TaskMode, @CronExpression, @IsEnabled, @Description, @CreateTime, @UpdateTime
-                );
-                SELECT SCOPE_IDENTITY();";
+                );";
 
             object result = this.BaseRepository(databaseName).FindObject(sql, entity);
             return result != null ? Convert.ToInt32(result) : 0;

@@ -344,4 +344,232 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             }
         }
     }
+
+    public class AcquisitionFileStateRepository : IAcquisitionFileStateRepository
+    {
+        private readonly string _connectionString;
+
+        [InjectionConstructor]
+        public AcquisitionFileStateRepository()
+        {
+            _connectionString = ConfigurationManager.ConnectionStrings["BaseDb"].ConnectionString;
+        }
+
+        public AcquisitionFileStateRepository(string connectionString)
+        {
+            _connectionString = connectionString;
+        }
+
+        public async Task<AcquisitionFileState> GetAsync(int configId, DateTime businessDate, string fileName, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT TOP 1
+                    [Id],
+                    [ConfigId],
+                    [BusinessDate],
+                    [FileName],
+                    [FullPath],
+                    [DataRowCount],
+                    [LastStartRow],
+                    [LastProcessedRows],
+                    [LastTaskLogId],
+                    [LastStatus],
+                    [LastUpdateSource],
+                    [IsSealed],
+                    [SealTime],
+                    [LastScanTime],
+                    [CreateTime],
+                    [UpdateTime]
+                FROM [dbo].[DA_AcquisitionFileState]
+                WHERE [ConfigId] = @ConfigId
+                  AND [BusinessDate] = @BusinessDate
+                  AND [FileName] = @FileName;";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                return await conn.QueryFirstOrDefaultAsync<AcquisitionFileState>(
+                    new CommandDefinition(
+                        sql,
+                        new
+                        {
+                            ConfigId = configId,
+                            BusinessDate = businessDate.Date,
+                            FileName = fileName
+                        },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+            }
+        }
+
+        public async Task<List<AcquisitionFileState>> GetByConfigAndDateRangeAsync(int configId, DateTime startDate, DateTime endDate, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT
+                    [Id],
+                    [ConfigId],
+                    [BusinessDate],
+                    [FileName],
+                    [FullPath],
+                    [DataRowCount],
+                    [LastStartRow],
+                    [LastProcessedRows],
+                    [LastTaskLogId],
+                    [LastStatus],
+                    [LastUpdateSource],
+                    [IsSealed],
+                    [SealTime],
+                    [LastScanTime],
+                    [CreateTime],
+                    [UpdateTime]
+                FROM [dbo].[DA_AcquisitionFileState]
+                WHERE [ConfigId] = @ConfigId
+                  AND [BusinessDate] >= @StartDate
+                  AND [BusinessDate] <= @EndDate;";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                var result = await conn.QueryAsync<AcquisitionFileState>(
+                    new CommandDefinition(
+                        sql,
+                        new
+                        {
+                            ConfigId = configId,
+                            StartDate = startDate.Date,
+                            EndDate = endDate.Date
+                        },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<AcquisitionFileState>();
+            }
+        }
+
+        public async Task<bool> UpsertSuccessAsync(AcquisitionFileState state, bool allowSealedUpdate, CancellationToken ct = default)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+
+            const string sql = @"
+                MERGE [dbo].[DA_AcquisitionFileState] WITH (HOLDLOCK) AS target
+                USING (
+                    SELECT
+                        @ConfigId AS [ConfigId],
+                        @BusinessDate AS [BusinessDate],
+                        @FileName AS [FileName],
+                        @FullPath AS [FullPath],
+                        @DataRowCount AS [DataRowCount],
+                        @LastStartRow AS [LastStartRow],
+                        @LastProcessedRows AS [LastProcessedRows],
+                        @LastTaskLogId AS [LastTaskLogId],
+                        @LastStatus AS [LastStatus],
+                        @LastUpdateSource AS [LastUpdateSource],
+                        @Now AS [Now]
+                ) AS source
+                ON target.[ConfigId] = source.[ConfigId]
+                   AND target.[BusinessDate] = source.[BusinessDate]
+                   AND target.[FileName] = source.[FileName]
+                WHEN MATCHED AND (target.[IsSealed] = 0 OR @AllowSealedUpdate = 1) THEN
+                    UPDATE SET
+                        [FullPath] = source.[FullPath],
+                        [DataRowCount] = CASE
+                            WHEN target.[DataRowCount] > source.[DataRowCount] THEN target.[DataRowCount]
+                            ELSE source.[DataRowCount]
+                        END,
+                        [LastStartRow] = source.[LastStartRow],
+                        [LastProcessedRows] = source.[LastProcessedRows],
+                        [LastTaskLogId] = source.[LastTaskLogId],
+                        [LastStatus] = source.[LastStatus],
+                        [LastUpdateSource] = source.[LastUpdateSource],
+                        [LastScanTime] = source.[Now],
+                        [UpdateTime] = source.[Now]
+                WHEN NOT MATCHED THEN
+                    INSERT (
+                        [ConfigId],
+                        [BusinessDate],
+                        [FileName],
+                        [FullPath],
+                        [DataRowCount],
+                        [LastStartRow],
+                        [LastProcessedRows],
+                        [LastTaskLogId],
+                        [LastStatus],
+                        [LastUpdateSource],
+                        [IsSealed],
+                        [LastScanTime],
+                        [CreateTime],
+                        [UpdateTime]
+                    )
+                    VALUES (
+                        source.[ConfigId],
+                        source.[BusinessDate],
+                        source.[FileName],
+                        source.[FullPath],
+                        source.[DataRowCount],
+                        source.[LastStartRow],
+                        source.[LastProcessedRows],
+                        source.[LastTaskLogId],
+                        source.[LastStatus],
+                        source.[LastUpdateSource],
+                        0,
+                        source.[Now],
+                        source.[Now],
+                        source.[Now]
+                    );";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                int rows = await conn.ExecuteAsync(
+                    new CommandDefinition(
+                        sql,
+                        new
+                        {
+                            state.ConfigId,
+                            BusinessDate = state.BusinessDate.Date,
+                            state.FileName,
+                            state.FullPath,
+                            state.DataRowCount,
+                            state.LastStartRow,
+                            state.LastProcessedRows,
+                            state.LastTaskLogId,
+                            state.LastStatus,
+                            state.LastUpdateSource,
+                            AllowSealedUpdate = allowSealedUpdate ? 1 : 0,
+                            Now = DateTime.Now
+                        },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return rows > 0;
+            }
+        }
+
+        public async Task<int> SealByTaskLogAsync(string taskLogId, CancellationToken ct = default)
+        {
+            const string sql = @"
+                UPDATE [dbo].[DA_AcquisitionFileState]
+                SET [IsSealed] = 1,
+                    [SealTime] = CASE WHEN [SealTime] IS NULL THEN @Now ELSE [SealTime] END,
+                    [UpdateTime] = @Now
+                WHERE [LastTaskLogId] = @TaskLogId
+                  AND [LastStatus] = 'Success'
+                  AND [IsSealed] = 0;";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                return await conn.ExecuteAsync(
+                    new CommandDefinition(
+                        sql,
+                        new
+                        {
+                            TaskLogId = taskLogId,
+                            Now = DateTime.Now
+                        },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+            }
+        }
+    }
 }

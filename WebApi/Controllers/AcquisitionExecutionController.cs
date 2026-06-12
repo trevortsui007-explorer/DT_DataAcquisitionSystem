@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Configuration;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -36,6 +37,9 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
 
             // 3. 根据任务 IDs 启动
             Post["/start/by-tasks", true] = async (p, ct) => await StartByTasks(p, ct);
+
+            // 3.1 SQL Server Agent 专用：按任务 IDs 以定时触发类型启动
+            Post["/start/scheduled/by-tasks", true] = async (p, ct) => await StartScheduledByTasks(p, ct);
 
             // 4. 根据单个配置 ID + 时间范围启动
             Post["/start/by-range/{id}", true] = async (p, ct) => await StartByRange(p, ct);
@@ -175,6 +179,54 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
         }
 
         /// <summary>
+        /// POST /start/scheduled/by-tasks
+        /// SQL Server Agent 专用入口，会生成 SCH 任务编号。
+        /// </summary>
+        private async Task<Response> StartScheduledByTasks(dynamic p, CancellationToken ct)
+        {
+            if (!ValidateSchedulerKey(out string authError))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    authError,
+                    null);
+            }
+
+            DateTime processDate = DateTime.TryParse(this.GetParam("processDate"), out var dt)
+                ? dt
+                : DateTime.Now;
+
+            string[] taskIds = this.GetQueryArray("taskIds");
+
+            if (taskIds == null || taskIds.Length == 0)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：taskIds 不能为空",
+                    null);
+            }
+
+            try
+            {
+                var result = await _executionService
+                    .StartScheduledByTasksAsync(taskIds, processDate, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    result?.Message ?? "计划任务采集已启动",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"定时任务启动异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
         /// POST /start/by-range/{id}
         /// </summary>
         private async Task<Response> StartByRange(dynamic p, CancellationToken ct)
@@ -298,6 +350,28 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
         }
 
         #endregion
+
+        private bool ValidateSchedulerKey(out string error)
+        {
+            error = null;
+
+            string expectedKey = ConfigurationManager.AppSettings["DAS.SchedulerKey"];
+            if (string.IsNullOrWhiteSpace(expectedKey))
+            {
+                error = "定时触发密钥未配置，拒绝执行。";
+                return false;
+            }
+
+            string providedKey = this.Request.Headers["X-DAS-Scheduler-Key"].FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(providedKey) ||
+                !string.Equals(providedKey, expectedKey, StringComparison.Ordinal))
+            {
+                error = "定时触发密钥无效，拒绝执行。";
+                return false;
+            }
+
+            return true;
+        }
 
         #region 查询接口
 
