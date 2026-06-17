@@ -283,6 +283,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             string actualFileName = Path.GetFileName(filePath);
             int startRow = 0;
             int processedRows = 0;
+            Exception postProcessingException = null;
 
             // 1. 初始化明细日志（每个物理文件一条记录）
             var logEntry = new AcquisitionLogEntry
@@ -333,10 +334,28 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     if (schema == null) throw new InvalidOperationException($"表 {config.TableName} 架构不存在");
 
                     DataTable dataToInsert = _dataService.PopulateDataTable(processedData, schema);
+                    var postProcessingRows = ExtractPostProcessingRowKeys(dataToInsert);
                     await _dataService.BulkInsertAsync(dataToInsert, config.TableName, ct);
 
                     // 6. 执行数据后处理 0 - 不处理；1 - 使用存储过程处理； 2- 使用C# Service处理
-                    await _postProcessingService.ProcessAsync(config, ct);
+                    try
+                    {
+                        await _postProcessingService.ProcessAsync(new PostProcessingContext
+                        {
+                            Config = config,
+                            TaskLogId = taskLogId,
+                            BusinessDate = businessDate.Date,
+                            SourceTableName = config.TableName,
+                            PostTableName = config.PostTableName,
+                            FileName = actualFileName,
+                            FullPath = filePath,
+                            Rows = postProcessingRows
+                        }, ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        postProcessingException = ex;
+                    }
                 }
 
                 // 7. 成功：完善并写入明细日志
@@ -358,6 +377,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
                 // 继续向上抛出，让外层的 foreach 捕获（如果是文件夹模式，会被外层吃掉异常继续下一个；如果是单文件，可按需处理）
                 throw new Exception($"处理文件 {filePath} 失败: {ex.Message}", ex);
+            }
+
+            if (postProcessingException != null)
+            {
+                throw new Exception($"Post processing failed: {postProcessingException.Message}", postProcessingException);
             }
         }
 
@@ -502,6 +526,67 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 ? FileStateUpdateSources.ManualRepair
                 : FileStateUpdateSources.ManualCurrent;
         }
+        private static List<PostProcessingRowKey> ExtractPostProcessingRowKeys(DataTable dataTable)
+        {
+            var result = new List<PostProcessingRowKey>();
+            if (dataTable == null || dataTable.Rows.Count == 0) return result;
+
+            DataColumn idColumn = FindColumn(dataTable, "Id");
+            if (idColumn == null) return result;
+
+            DataColumn fullPathColumn = FindColumn(dataTable, "fullFilePath");
+            DataColumn rowColumn = FindColumn(dataTable, "row");
+
+            foreach (DataRow dataRow in dataTable.Rows)
+            {
+                if (dataRow.IsNull(idColumn)) continue;
+
+                Guid id;
+                object idValue = dataRow[idColumn];
+                if (idValue is Guid)
+                {
+                    id = (Guid)idValue;
+                }
+                else if (!Guid.TryParse(Convert.ToString(idValue), out id))
+                {
+                    continue;
+                }
+
+                if (id == Guid.Empty) continue;
+
+                int rowNumber;
+                int? sourceRow = null;
+                if (rowColumn != null && !dataRow.IsNull(rowColumn) && int.TryParse(Convert.ToString(dataRow[rowColumn]), out rowNumber))
+                {
+                    sourceRow = rowNumber;
+                }
+
+                result.Add(new PostProcessingRowKey
+                {
+                    Id = id,
+                    FullPath = fullPathColumn == null || dataRow.IsNull(fullPathColumn)
+                        ? null
+                        : Convert.ToString(dataRow[fullPathColumn]),
+                    Row = sourceRow
+                });
+            }
+
+            return result;
+        }
+
+        private static DataColumn FindColumn(DataTable dataTable, string columnName)
+        {
+            if (dataTable == null || string.IsNullOrWhiteSpace(columnName)) return null;
+
+            foreach (DataColumn column in dataTable.Columns)
+            {
+                if (string.Equals(column.ColumnName, columnName, StringComparison.OrdinalIgnoreCase))
+                    return column;
+            }
+
+            return null;
+        }
+
         #endregion
     }
 }

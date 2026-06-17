@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -12,6 +13,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
     {
         private readonly IDataService _dataService;
         private readonly IEnumerable<IPostProcessor> _customProcessors;
+        private static readonly ConcurrentDictionary<string, SemaphoreSlim> _serviceLocks
+            = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
 
         public PostProcessingService(
             IDataService dataService,
@@ -23,18 +26,43 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
         public async Task ProcessAsync(AcquisitionConfig config, CancellationToken ct)
         {
+            if (config == null) throw new ArgumentNullException(nameof(config));
+
+            await ProcessAsync(new PostProcessingContext
+            {
+                Config = config,
+                BusinessDate = DateTime.Today,
+                SourceTableName = config.TableName,
+                PostTableName = config.PostTableName,
+                Rows = new List<PostProcessingRowKey>()
+            }, ct).ConfigureAwait(false);
+        }
+
+        public async Task ProcessAsync(PostProcessingContext context, CancellationToken ct)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (context.Config == null) throw new ArgumentNullException(nameof(context.Config));
+
+            var config = context.Config;
+            context.SourceTableName = string.IsNullOrWhiteSpace(context.SourceTableName)
+                ? config.TableName
+                : context.SourceTableName;
+            context.PostTableName = string.IsNullOrWhiteSpace(context.PostTableName)
+                ? config.PostTableName
+                : context.PostTableName;
+            context.Rows = context.Rows ?? new List<PostProcessingRowKey>();
+
             switch (config.PostProcessingType)
             {
                 case PostProcessingType.None:
-                    // 不处理，直接结束
                     return;
 
                 case PostProcessingType.Procedure:
-                    await HandleProcedure(config, ct);
+                    await HandleProcedure(config, ct).ConfigureAwait(false);
                     break;
 
                 case PostProcessingType.Service:
-                    await HandleCustomService(config, ct);
+                    await HandleCustomService(context, ct).ConfigureAwait(false);
                     break;
 
                 default:
@@ -42,20 +70,17 @@ namespace DT_DataAcquisitionSystem.Application.Services
             }
         }
 
-        // 处理存储过程
         private async Task HandleProcedure(AcquisitionConfig config, CancellationToken ct)
         {
             if (string.IsNullOrEmpty(config.ProcedureName))
                 throw new Exception($"配置项 {config.EqName} 设置为存储过程后处理，但 ProcedureName 为空");
 
-            // 调用 DataService 执行存储过程
-            // 传入 Flag 作为业务参数
-            await _dataService.ExecuteStoredProcedureAsync(config.Flag, config.ProcedureName, ct);
+            await _dataService.ExecuteStoredProcedureAsync(config.Flag, config.ProcedureName, ct).ConfigureAwait(false);
         }
 
-        // 处理 C# 自定义 Service 逻辑
-        private async Task HandleCustomService(AcquisitionConfig config, CancellationToken ct)
+        private async Task HandleCustomService(PostProcessingContext context, CancellationToken ct)
         {
+            var config = context.Config;
             if (string.IsNullOrEmpty(config.ServiceName))
                 throw new Exception($"配置项 {config.EqName} 设置为 Service 后处理，但 ServiceName 为空");
 
@@ -64,7 +89,23 @@ namespace DT_DataAcquisitionSystem.Application.Services
             if (processor == null)
                 throw new Exception($"未找到名为 {config.ServiceName} 的后处理器实现");
 
-            await processor.ExecuteAsync(config.Flag, config, ct);
+            string lockKey = string.Join("|", new[]
+            {
+                config.ServiceName ?? string.Empty,
+                context.SourceTableName ?? string.Empty,
+                context.PostTableName ?? string.Empty
+            });
+
+            var semaphore = _serviceLocks.GetOrAdd(lockKey, _ => new SemaphoreSlim(1, 1));
+            await semaphore.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await processor.ExecuteAsync(context, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
         }
     }
 }
