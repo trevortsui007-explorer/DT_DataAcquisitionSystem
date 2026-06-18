@@ -14,6 +14,13 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
         private const string DefaultGroupTable = "DA_AcquisitionGroup";
         private const string DefaultGroupLinkTable = "DA_AcquisitionGroup_Config";
 
+        private bool HasColumn(string tableName, string columnName, string databaseName = DefaultDb)
+        {
+            string sql = "SELECT COL_LENGTH(@TableName, @ColumnName)";
+            object result = this.BaseRepository(databaseName).FindObject(sql, new { TableName = "dbo." + tableName, ColumnName = columnName });
+            return result != null && result != DBNull.Value;
+        }
+
         #region Group Query
 
         public IEnumerable<AcquisitionGroupDto> GetList(string tableName = DefaultGroupTable, string linkTableName = DefaultGroupLinkTable, string databaseName = DefaultDb)
@@ -22,10 +29,14 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             linkTableName = string.IsNullOrEmpty(linkTableName) ? DefaultGroupLinkTable : linkTableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
-            // Step 1：查询 Group 列表
+            bool hasExportProcedureColumn = HasColumn(tableName, "ExportProcedureName", databaseName);
+            string exportProcedureSelect = hasExportProcedureColumn
+                ? ", g.ExportProcedureName"
+                : ", CAST('' AS NVARCHAR(200)) AS ExportProcedureName";
+
             string groupSql = $@"
                 SELECT 
-                    g.Id, g.GroupName, g.GroupCategory, g.GroupType, g.IsEnabled,
+                    g.Id, g.GroupName, g.GroupCategory, g.GroupType, g.IsEnabled{exportProcedureSelect},
                     (SELECT COUNT(1) FROM [{linkTableName}] c WHERE c.GroupId = g.Id) AS ConfigCount
                 FROM [{tableName}] g
                 ORDER BY g.Id ASC";
@@ -34,7 +45,6 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
 
             if (groups.Count == 0) return groups;
 
-            // Step 2：查询关联的 Config
             var groupIds = groups.Select(x => $"'{x.Id}'");
             string idInClause = string.Join(",", groupIds);
 
@@ -49,12 +59,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
 
             var configFlatList = this.BaseRepository(databaseName).FindList<GroupConfigFlatDto>(configSql);
 
-            // Step 3：建立映射关系
             var configLookup = configFlatList
                 .Where(x => !string.IsNullOrEmpty(x.EqName))
                 .ToLookup(x => x.GroupId);
 
-            // Step 4：回填数据
             foreach (var group in groups)
             {
                 group.AssociatedConfigs = configLookup[group.Id]
@@ -73,7 +81,12 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             tableName = string.IsNullOrEmpty(tableName) ? DefaultGroupTable : tableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
-            string sql = $"SELECT * FROM [{tableName}] WHERE [Id] IN @Ids ORDER BY [Id] ASC";
+            bool hasExportProcedureColumn = HasColumn(tableName, "ExportProcedureName", databaseName);
+            string exportProcedureSelect = hasExportProcedureColumn
+                ? ", [ExportProcedureName]"
+                : ", CAST('' AS NVARCHAR(200)) AS ExportProcedureName";
+
+            string sql = $"SELECT [Id], [GroupName], [GroupCategory], [GroupType], [IsEnabled]{exportProcedureSelect} FROM [{tableName}] WHERE [Id] IN @Ids ORDER BY [Id] ASC";
             return this.BaseRepository(databaseName).FindList<AcquisitionGroup>(sql, new { Ids = ids });
         }
 
@@ -105,8 +118,17 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             tableName = string.IsNullOrEmpty(tableName) ? DefaultGroupTable : tableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
-            // 对应你提供的：GroupName, GroupCategory, GroupType, IsEnabled
-            string sql = $@"
+            bool hasExportProcedureColumn = HasColumn(tableName, "ExportProcedureName", databaseName);
+            string sql = hasExportProcedureColumn
+                ? $@"
+                INSERT INTO [{tableName}] (
+                    [GroupName], [GroupCategory], [GroupType], [ExportProcedureName], [IsEnabled]
+                ) 
+                VALUES (
+                    @GroupName, @GroupCategory, @GroupType, @ExportProcedureName, @IsEnabled
+                );
+                SELECT SCOPE_IDENTITY();"
+                : $@"
                 INSERT INTO [{tableName}] (
                     [GroupName], [GroupCategory], [GroupType], [IsEnabled]
                 ) 
@@ -124,12 +146,15 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             tableName = string.IsNullOrEmpty(tableName) ? DefaultGroupTable : tableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
+            bool hasExportProcedureColumn = HasColumn(tableName, "ExportProcedureName", databaseName);
+            string exportProcedureUpdate = hasExportProcedureColumn ? "ExportProcedureName = @ExportProcedureName," : string.Empty;
             string sql = $@"
                 UPDATE [{tableName}] 
                 SET 
                     GroupName = @GroupName, 
                     GroupCategory = @GroupCategory, 
                     GroupType = @GroupType, 
+                    {exportProcedureUpdate}
                     IsEnabled = @IsEnabled
                 WHERE Id = @Id";
 
@@ -143,7 +168,6 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             tableName = string.IsNullOrEmpty(tableName) ? DefaultGroupTable : tableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
-            // 注意：删除组时，可能需要考虑是否同步删除 DA_AcquisitionGroup_Config 中的关联数据
             string sql = $"DELETE FROM [{tableName}] WHERE Id IN @Ids";
             return this.BaseRepository(databaseName).ExecuteBySql(sql, new { Ids = keyValue }) > 0;
         }
@@ -195,7 +219,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             return this.BaseRepository(databaseName).ExecuteBySql(sql, new { GroupId = groupId, ConfigIds = configIds }) > 0;
         }
 
-        public bool RemoveAllConfigsFromGroup(int groupId,string groupLinkTable = DefaultGroupLinkTable, string databaseName = DefaultDb)
+        public bool RemoveAllConfigsFromGroup(int groupId, string groupLinkTable = DefaultGroupLinkTable, string databaseName = DefaultDb)
         {
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 

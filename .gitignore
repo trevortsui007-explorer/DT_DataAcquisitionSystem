@@ -18,3 +18,4 @@ node_modules/
 .svn/
 .DS_Store
 Thumbs.db
+Scripts/Optimize_DA_AcquisitionFileState.sql
