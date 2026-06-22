@@ -113,20 +113,22 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
                     // 根据模板生成预期的文件名关键特征
                     string expectedFileName = FileDateTimeUtil.GetProcessedFileName(config, currentDay);
+                    bool isFolderMode = string.IsNullOrWhiteSpace(config.FileNamePattern);
 
                     // 获取配置中的后缀 (假设属性名为 config.FileExtension，如 ".csv")
                     string extension = NormalizeExtension(config.FileType);
-                    string expectedName = NormalizeExpectedFileName(expectedFileName, extension);
+                    string expectedName = isFolderMode
+                        ? BuildFolderModeExpectedName(extension)
+                        : NormalizeExpectedFileName(expectedFileName, extension);
 
-                    // 3. 在文件清单中查找匹配项：包含关键字 且 以指定后缀结尾
+                    // 3. 在文件清单中查找匹配项：文件夹模式只校验类型；普通模式校验完整文件名
                     var matches = existingFiles
                         .Where(f => {
-                            // 1. 先校验后缀
                             string actualFileName = Path.GetFileName(f);
                             if (!HasExpectedExtension(actualFileName, extension)) return false;
 
-                            // 2. 核心：确保实际文件名与预期文件名完全一致
-                            return actualFileName.Equals(expectedName, StringComparison.OrdinalIgnoreCase);
+                            return isFolderMode ||
+                                actualFileName.Equals(expectedName, StringComparison.OrdinalIgnoreCase);
                         })
                         .ToList();
 
@@ -135,10 +137,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         // 发现文件：添加到 DTO
                         foreach (var fileName in matches)
                         {
+                            string actualFileName = Path.GetFileName(fileName);
                             var entry = new FileEntryDto
                             {
-                                FileName = fileName,
-                                FullPath = CombinePath(actualFolderPath, fileName),
+                                FileName = actualFileName,
+                                FullPath = CombinePath(actualFolderPath, actualFileName),
                                 DetectedDate = currentDay,
                                 IsMissing = false
                             };
@@ -152,7 +155,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         // 未发现文件：标记缺失项
                         var entry = new FileEntryDto
                         {
-                            FileName = expectedName, // 展示预期的文件名
+                            FileName = expectedName, // 展示预期的文件名或文件夹模式通配规则
                             FullPath = CombinePath(actualFolderPath, expectedName),
                             DetectedDate = currentDay,
                             IsMissing = true
@@ -203,6 +206,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return expectedName;
         }
 
+        private string BuildFolderModeExpectedName(string extension)
+        {
+            return string.IsNullOrEmpty(extension) ? "*.*" : "*" + extension;
+        }
+
         private bool HasExpectedExtension(string fileName, string extension)
         {
             return string.IsNullOrEmpty(extension) ||
@@ -237,3 +245,4 @@ namespace DT_DataAcquisitionSystem.Application.Services
         }
     }
 }
+
