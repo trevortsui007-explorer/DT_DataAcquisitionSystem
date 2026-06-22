@@ -156,7 +156,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         var entry = new FileEntryDto
                         {
                             FileName = expectedName, // 展示预期的文件名或文件夹模式通配规则
-                            FullPath = CombinePath(actualFolderPath, expectedName),
+                            FullPath = isFolderMode ? actualFolderPath : CombinePath(actualFolderPath, expectedName),
                             DetectedDate = currentDay,
                             IsMissing = true
                         };

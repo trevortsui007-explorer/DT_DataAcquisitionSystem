@@ -232,7 +232,10 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     var files = await provider.GetFileNamesAsync(path, pattern, false, ct);
                     if (files != null && files.Any())
                     {
-                        targetFiles.AddRange(files);
+                        foreach (var file in files)
+                        {
+                            targetFiles.Add(BuildTargetFilePath(path, file));
+                        }
                     }
                 }
 
@@ -572,6 +575,23 @@ namespace DT_DataAcquisitionSystem.Application.Services
             }
 
             return result;
+        }
+
+        private static string BuildTargetFilePath(string folderPath, string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath)) return filePath;
+            if (IsFullProviderPath(filePath)) return filePath;
+            if (string.IsNullOrWhiteSpace(folderPath)) return filePath;
+
+            return folderPath.TrimEnd('/', '\\') + "/" + filePath.TrimStart('/', '\\');
+        }
+
+        private static bool IsFullProviderPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            if (path.Contains("://")) return true;
+
+            return Path.IsPathRooted(path);
         }
 
         private static DataColumn FindColumn(DataTable dataTable, string columnName)
