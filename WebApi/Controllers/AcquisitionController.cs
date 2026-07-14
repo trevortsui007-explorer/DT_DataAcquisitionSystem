@@ -1,5 +1,6 @@
 ﻿using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
+using DT_DataAcquisitionSystem.Application.DTOs;
 using DT_DataAcquisitionSystem.Application.Services;
 using DT_DataAcquisitionSystem.Common.Extensions;
 using Nancy;
@@ -18,14 +19,21 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
     {
         private readonly DataAcquisitionService _acquisitionService;
         private readonly IFileConfigService _fileConfigService;
+        private readonly IFileConfigGroupService _fileConfigGroupService;
+        private readonly IAcquisitionTaskService _taskService;
         private readonly IAcquisitionLogService _logService;
 
         public AcquisitionController(
             DataAcquisitionService acquisitionService,
-            IFileConfigService fileConfigService, IAcquisitionLogService logService) : base("/api/data-acquisition")
+            IFileConfigService fileConfigService,
+            IFileConfigGroupService fileConfigGroupService,
+            IAcquisitionTaskService taskService,
+            IAcquisitionLogService logService) : base("/api/data-acquisition")
         {
             _acquisitionService = acquisitionService;
             _fileConfigService = fileConfigService;
+            _fileConfigGroupService = fileConfigGroupService;
+            _taskService = taskService;
             _logService = logService;
 
             // --- 任务触发路由映射 ---
@@ -50,6 +58,9 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
 
             // 7. 按时间范围补录多个配置 (POST)
             Post["/execute-configs-range", true] = async (p, ct) => await ExecuteConfigsByTimeRange(p, ct);
+
+            // 8. 模板导入：一次性创建配置、配置组、任务和关联
+            Post["/import-task-template", true] = async (p, ct) => await ImportTaskTemplate(p, ct);
         }
 
         #region 1. 任务触发接口实现
@@ -284,6 +295,82 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
             catch (Exception ex)
             {
                 return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, $"多配置批量补录异常: {ex.Message}", null);
+            }
+        }
+
+        private async Task<Response> ImportTaskTemplate(dynamic _, System.Threading.CancellationToken ct)
+        {
+            try
+            {
+                var request = this.Bind<ImportTaskTemplateRequest>();
+                if (request?.Config == null || request.Group == null || request.Task == null)
+                {
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "参数错误：Config、Group、Task 不能为空", null);
+                }
+
+                request.Config.ParserType = string.IsNullOrWhiteSpace(request.Config.ParserType)
+                    ? "template-excel"
+                    : request.Config.ParserType;
+                request.Config.TemplateId = request.Config.TemplateId ?? request.TemplateId;
+                request.Config.FileType = string.IsNullOrWhiteSpace(request.Config.FileType) ? ".xlsx" : request.Config.FileType;
+                request.Config.FieldMappings = string.IsNullOrWhiteSpace(request.Config.FieldMappings) ? "{}" : request.Config.FieldMappings;
+                request.Config.IsEnabled = true;
+
+                request.Group.IsEnabled = true;
+                request.Task.IsEnabled = request.Task.IsEnabled == 0 ? 1 : request.Task.IsEnabled;
+
+                int configId = _fileConfigService.CreateConfig(request.Config, "DA_AcquisitionConfig", "BaseDb");
+                if (configId <= 0)
+                {
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "配置创建失败", null);
+                }
+
+                int groupId = _fileConfigGroupService.CreateConfigGroup(request.Group, "DA_AcquisitionGroup", "BaseDb");
+                if (groupId <= 0)
+                {
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "配置组创建失败", null);
+                }
+
+                bool groupLinked = await _fileConfigGroupService.AddConfigsToGroup(
+                    groupId,
+                    new[] { configId },
+                    "DA_AcquisitionGroup_Config",
+                    "BaseDb").ConfigureAwait(false);
+
+                if (!groupLinked)
+                {
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "配置组关联配置失败", null);
+                }
+
+                int taskId = _taskService.CreateTask(request.Task, "DA_AcquisitionTask", "BaseDb");
+                if (taskId <= 0)
+                {
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "任务创建失败", null);
+                }
+
+                bool taskLinked = _taskService.AssignGroupsToTask(
+                    taskId,
+                    new[] { groupId },
+                    "DA_AcquisitionTask_Group",
+                    "BaseDb");
+
+                if (!taskLinked)
+                {
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "任务关联配置组失败", null);
+                }
+
+                var response = new ImportTaskTemplateResponse
+                {
+                    ConfigId = configId,
+                    GroupId = groupId,
+                    TaskId = taskId
+                };
+
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "模板采集任务创建成功", response);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, $"模板采集任务创建失败：{ex.Message}", null);
             }
         }
 

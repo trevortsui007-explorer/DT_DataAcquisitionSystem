@@ -1,4 +1,4 @@
-﻿using DT_DataAcquisitionSystem.Domain.Interfaces;
+using DT_DataAcquisitionSystem.Domain.Interfaces;
 using DT_DataAcquisitionSystem.Common.Extensions;
 using Nancy;
 using Nancy.ModelBinding;
@@ -26,9 +26,12 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
 
             // 1. 自动建表接口 (POST)
             Post["/create-table", true] = async (p, ct) => await CreateTable(p, ct);
+            Post["/table/create", true] = async (p, ct) => await CreateTable(p, ct);
 
             // 2. 获取表结构（GET）
             Get["/fields/{tableName}", true] = async (p, ct) => await GetTableFields(p, ct);
+            Get["/table/schema", true] = async (p, ct) => await GetTableSchema(p, ct);
+            Get["/table/check", true] = async (p, ct) => await CheckTableExists(p, ct);
         }
 
         #region 接口实现
@@ -71,6 +74,53 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
             }
         }
 
+        private async Task<dynamic> CheckTableExists(dynamic p, System.Threading.CancellationToken ct)
+        {
+            string tableName = this.Request.Query["tableName"];
+
+            if (string.IsNullOrWhiteSpace(tableName))
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "表名不能为空", null);
+
+            try
+            {
+                DataTable schema = await _dataService.GetTableSchemaAsync(tableName);
+                bool exists = schema != null;
+
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "检查成功", new
+                {
+                    TableName = tableName,
+                    Exists = exists,
+                    TableExists = exists
+                });
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, $"检查表失败: {ex.Message}", null);
+            }
+        }
+
+        private async Task<dynamic> GetTableSchema(dynamic p, System.Threading.CancellationToken ct)
+        {
+            string tableName = this.Request.Query["tableName"];
+
+            if (string.IsNullOrWhiteSpace(tableName))
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "表名不能为空", null);
+
+            try
+            {
+                DataTable schema = await _dataService.GetTableSchemaAsync(tableName);
+
+                if (schema == null)
+                    return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, $"未找到表: {tableName}", null);
+
+                var columns = ToTableColumnInfo(schema);
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "获取成功", columns);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, $"获取表字段失败: {ex.Message}", null);
+            }
+        }
         private async Task<dynamic> GetTableFields(dynamic p, System.Threading.CancellationToken ct)
         {
             string tableName = p.tableName;
@@ -116,6 +166,25 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
 
         #region 辅助方法
 
+        private List<TableColumnInfo> ToTableColumnInfo(DataTable schema)
+        {
+            var columns = new List<TableColumnInfo>();
+            foreach (DataColumn col in schema.Columns)
+            {
+                columns.Add(new TableColumnInfo
+                {
+                    ColumnName = col.ColumnName,
+                    DataType = col.DataType.Name,
+                    AllowDBNull = col.AllowDBNull,
+                    IsIdentity = col.AutoIncrement,
+                    IsPrimaryKey = schema.PrimaryKey.Any(pk => pk.ColumnName == col.ColumnName),
+                    MaxLength = col.MaxLength,
+                    DefaultValue = col.DefaultValue?.ToString()
+                });
+            }
+
+            return columns;
+        }
         /// <summary>
         /// 将前端传入的字符串类型转换为 C# 真实的 Type
         /// </summary>

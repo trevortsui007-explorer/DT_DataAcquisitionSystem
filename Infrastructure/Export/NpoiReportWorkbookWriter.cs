@@ -6,6 +6,7 @@ using System.Linq;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using NPOI.SS.UserModel;
 using NPOI.XSSF.Streaming;
+using NPOI.XSSF.UserModel;
 
 namespace DT_DataAcquisitionSystem.Infrastructure.Export
 {
@@ -22,7 +23,8 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Export
 
             Directory.CreateDirectory(Path.GetDirectoryName(filePath));
 
-            using (var workbook = new SXSSFWorkbook(100))
+            var workbook = new SXSSFWorkbook(new XSSFWorkbook(), 100);
+            try
             {
                 var headerStyle = workbook.CreateCellStyle();
                 var headerFont = workbook.CreateFont();
@@ -39,7 +41,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Export
                 {
                     workbook.Write(stream);
                 }
-
+            }
+            finally
+            {
                 workbook.Dispose();
             }
         }
@@ -137,3 +141,6 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Export
         }
     }
 }
+
+
+

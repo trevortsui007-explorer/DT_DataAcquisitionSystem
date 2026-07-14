@@ -1,4 +1,4 @@
-﻿using DT_DataAcquisitionSystem.Application.Services;
+using DT_DataAcquisitionSystem.Application.Services;
 using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Common.Extensions;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
@@ -19,7 +19,7 @@ namespace Learun.Application.WebApi.Modules.DT_DataAcquisitionSystem.WebApi.Cont
         private readonly IFileConfigGroupService _fileConfigGroupService;
         private readonly IDataService _dataService;
 
-        public FileConfigGroupController(IFileConfigGroupService fileConfigGroupService, IDataService dataService) : base("/api/file-configs")
+        public FileConfigGroupController(IFileConfigGroupService fileConfigGroupService, IDataService dataService) : base("/api/data-acquisition/file-configs")
         {
             _fileConfigGroupService = fileConfigGroupService;
             _dataService = dataService;
