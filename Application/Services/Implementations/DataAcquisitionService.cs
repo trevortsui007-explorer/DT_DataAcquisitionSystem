@@ -309,6 +309,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             {
                 TaskLogId = taskLogId,
                 ConfigId = config.Id,
+                BusinessDate = businessDate.Date,
                 FileName = actualFileName,
                 FullFilePath = filePath,
                 StartTime = DateTime.Now,
@@ -330,7 +331,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
                 startRow = shouldFullReload
                     ? ResolveConfiguredStartRow(config)
-                    : await _logService.GetNextStartRowAsync(config.Id, actualFileName, ct);
+                    : await _logService.GetNextStartRowAsync(config.Id, businessDate, actualFileName, ct);
                 logEntry.StartRow = startRow;
 
                 if (!provider.Exists(filePath))
@@ -551,6 +552,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             {
                 TaskLogId = taskLogId,
                 ConfigId = config.Id,
+                BusinessDate = processDate.Date,
                 FileName = ResolveConfigFailureFileName(path, filename),
                 FullFilePath = ResolveConfigFailureFullFilePath(path, filename),
                 StartRow = 0,

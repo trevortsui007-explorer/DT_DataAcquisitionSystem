@@ -49,6 +49,8 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
         {
             int configId = (int)p.configId;
             string fileName = this.GetParam("fileName");
+            string businessDateText = this.GetParam("businessDate");
+            DateTime businessDate = DateTime.Today;
 
             if (configId <= 0)
                 return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "参数错误：ConfigId 必须大于 0", null);
@@ -56,13 +58,17 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
             if (string.IsNullOrWhiteSpace(fileName))
                 return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "请输入要查询的文件名", null);
 
+            if (!string.IsNullOrWhiteSpace(businessDateText) && !DateTime.TryParse(businessDateText, out businessDate))
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "参数错误：businessDate 格式不正确", null);
+
             try
             {
-                int nextRow = await _logService.GetNextStartRowAsync(configId, fileName, ct);
+                int nextRow = await _logService.GetNextStartRowAsync(configId, businessDate, fileName, ct);
 
                 return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "查询成功", new
                 {
                     ConfigId = configId,
+                    BusinessDate = businessDate.Date,
                     NextStartRow = nextRow
                 });
             }

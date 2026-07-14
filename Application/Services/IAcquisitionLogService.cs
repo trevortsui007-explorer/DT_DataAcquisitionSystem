@@ -10,7 +10,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
     public interface IAcquisitionLogService
     {
         // 获取下一次采集的起始行
-        Task<int> GetNextStartRowAsync(int configId, string fileName, CancellationToken ct = default);
+        Task<int> GetNextStartRowAsync(int configId, DateTime businessDate, string fileName, CancellationToken ct = default);
 
         // 记录本次采集任务进度
         Task<string> RecordTaskLogEntryAsync(AcquisitionTaskLogEntry entry, CancellationToken ct = default);

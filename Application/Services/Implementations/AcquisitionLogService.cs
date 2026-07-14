@@ -20,9 +20,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
             _logRepo = logRepo;
         }
 
-        public async Task<int> GetNextStartRowAsync(int configId, string fileName, CancellationToken ct = default)
+        public async Task<int> GetNextStartRowAsync(int configId, DateTime businessDate, string fileName, CancellationToken ct = default)
         {
-            int lastPos = await _logRepo.GetLastProcessedRowByConfigIdAsync(configId, fileName, ct).ConfigureAwait(false);
+            int lastPos = await _logRepo.GetLastProcessedRowByConfigIdAsync(configId, businessDate.Date, fileName, ct).ConfigureAwait(false);
             if (lastPos > 0) return lastPos;
 
             var ids = new List<string> { configId.ToString() };

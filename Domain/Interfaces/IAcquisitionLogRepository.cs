@@ -51,7 +51,7 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
         /// <summary>
         /// 获取指定配置与文件最后一次处理到的行号，用于断点续传
         /// </summary>
-        Task<int> GetLastProcessedRowByConfigIdAsync(int configId, string fileName, CancellationToken ct = default);
+        Task<int> GetLastProcessedRowByConfigIdAsync(int configId, DateTime businessDate, string fileName, CancellationToken ct = default);
 
         /// <summary>
         /// 获取采集任务日志列表（支持分页与多条件筛选）

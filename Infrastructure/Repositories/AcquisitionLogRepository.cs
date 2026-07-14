@@ -28,7 +28,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             _connectionString = connectionString;
         }
 
-        public async Task<int> GetLastProcessedRowByConfigIdAsync(int configId, string fileName, CancellationToken ct = default)
+        public async Task<int> GetLastProcessedRowByConfigIdAsync(int configId, DateTime businessDate, string fileName, CancellationToken ct = default)
         {
             // 逻辑：寻找【该配置下】【同一个日期】最后一次执行成功的记录，获取其已处理到的位置
             // 这里 ProcessedRows 记录的是该次任务处理掉的总行数
@@ -36,7 +36,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             const string sql = @"
                 SELECT TOP 1 ([StartRow] + [ProcessedRows]) as NextStartRow
                 FROM [dbo].[DA_AcquisitionLog]
-                WHERE [ConfigId] = @ConfigId AND [FileName] = @FileName AND [Status] = 'Success'
+                WHERE [ConfigId] = @ConfigId
+                  AND [BusinessDate] = @BusinessDate
+                  AND [FileName] = @FileName
+                  AND [Status] = 'Success'
                 ORDER BY [EndTime] DESC";
 
             using (var conn = new SqlConnection(_connectionString))
@@ -46,6 +49,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 using (var cmd = new SqlCommand(sql, conn))
                 {
                     cmd.Parameters.Add("@ConfigId", SqlDbType.Int).Value = configId;
+                    cmd.Parameters.Add("@BusinessDate", SqlDbType.Date).Value = businessDate.Date;
                     cmd.Parameters.Add("@FileName", SqlDbType.NVarChar).Value = fileName;
 
                     var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
@@ -106,10 +110,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
         {
             const string sql = @"
                 INSERT INTO [dbo].[DA_AcquisitionLog]
-                ([TaskLogId], [ConfigId], [FileName], [FullFilePath], [StartRow], [ProcessedRows], [StartTime], [EndTime], [Status], [ErrorMessage])
+                ([TaskLogId], [ConfigId], [BusinessDate], [FileName], [FullFilePath], [StartRow], [ProcessedRows], [StartTime], [EndTime], [Status], [ErrorMessage])
                 OUTPUT INSERTED.[Id]
                 VALUES
-                (@TaskLogId, @ConfigId, @FileName, @FullFilePath, @StartRow, @ProcessedRows, @StartTime, @EndTime, @Status, @ErrorMessage);";
+                (@TaskLogId, @ConfigId, @BusinessDate, @FileName, @FullFilePath, @StartRow, @ProcessedRows, @StartTime, @EndTime, @Status, @ErrorMessage);";
 
             using (var conn = new SqlConnection(_connectionString))
             {
@@ -120,6 +124,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     // 注意这里 TaskLogId 改为了 NVarChar，以匹配实体中的 string
                     cmd.Parameters.Add("@TaskLogId", SqlDbType.NVarChar).Value = (object)entry.TaskLogId ?? DBNull.Value;
                     cmd.Parameters.Add("@ConfigId", SqlDbType.Int).Value = entry.ConfigId;
+                    cmd.Parameters.Add("@BusinessDate", SqlDbType.Date).Value = (object)entry.BusinessDate?.Date ?? DBNull.Value;
                     cmd.Parameters.Add("@FileName", SqlDbType.NVarChar, 500).Value = (object)entry.FileName ?? DBNull.Value;
                     cmd.Parameters.Add("@FullFilePath", SqlDbType.NVarChar).Value = (object)entry.FullFilePath ?? DBNull.Value;
                     cmd.Parameters.Add("@StartRow", SqlDbType.Int).Value = entry.StartRow;

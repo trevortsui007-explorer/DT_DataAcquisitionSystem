@@ -21,6 +21,8 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
 
         public int ConfigId { get; set; }
 
+        public DateTime? BusinessDate { get; set; }
+
         [StringLength(1000)]
         public string FileName { get; set; }
 
