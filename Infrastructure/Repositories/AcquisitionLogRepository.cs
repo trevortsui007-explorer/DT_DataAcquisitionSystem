@@ -37,7 +37,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 SELECT TOP 1 ([StartRow] + [ProcessedRows]) as NextStartRow
                 FROM [dbo].[DA_AcquisitionLog]
                 WHERE [ConfigId] = @ConfigId AND [FileName] = @FileName AND [Status] = 'Success'
-                ORDER BY [Id] DESC";
+                ORDER BY [EndTime] DESC";
 
             using (var conn = new SqlConnection(_connectionString))
             {
