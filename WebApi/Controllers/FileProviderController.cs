@@ -77,7 +77,7 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                 // 4. 调用文件发现服务
                 // 同样的，FileDiscoveryService 建议通过 DI 注入
                 var discoveryService = new FileDiscoveryService();
-                var list = await discoveryService.GetDetailedDiscoveryAsync(config, startDate, endDate, user, pass);
+                var list = await discoveryService.GetDetailedDiscoveryAsync(config, startDate, endDate, user, pass, ct);
 
                 return this.ToResponse(
                     NancyModuleExtensions.ResponseCode.success,
@@ -118,23 +118,39 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                     .ToList();
 
                 var discoveryService = new FileDiscoveryService();
+                var semaphore = new SemaphoreSlim(4);
                 var tasks = configs.Select(async config =>
                 {
-                    var discovery = await discoveryService
-                        .GetDetailedDiscoveryAsync(config, targetDate.Date, targetDate.Date, user, pass)
-                        .ConfigureAwait(false);
-
-                    var file = discovery
-                        .SelectMany(x => x.Files ?? new List<FileEntryDto>())
-                        .FirstOrDefault(x => x.DetectedDate.Date == targetDate.Date);
-
-                    return new GroupFileDiscoveryItemDto
+                    await semaphore.WaitAsync(ct).ConfigureAwait(false);
+                    try
                     {
-                        ConfigId = config.Id,
-                        EqName = config.EqName,
-                        IsMissing = file?.IsMissing ?? true,
-                        FullFilePath = file?.FullPath ?? string.Empty
-                    };
+                        var discovery = await discoveryService
+                            .GetDetailedDiscoveryAsync(config, targetDate.Date, targetDate.Date, user, pass, ct)
+                            .ConfigureAwait(false);
+
+                        bool isFolderListMode = discovery.Any(x =>
+                            string.Equals(x.DiscoveryMode, "folder-list", StringComparison.OrdinalIgnoreCase));
+
+                        var files = discovery
+                            .SelectMany(x => x.Files ?? new List<FileEntryDto>())
+                            .ToList();
+
+                        var file = isFolderListMode
+                            ? files.FirstOrDefault(x => !x.IsMissing)
+                            : files.FirstOrDefault(x => x.DetectedDate.Date == targetDate.Date);
+
+                        return new GroupFileDiscoveryItemDto
+                        {
+                            ConfigId = config.Id,
+                            EqName = config.EqName,
+                            IsMissing = isFolderListMode ? file == null : file?.IsMissing ?? true,
+                            FullFilePath = file?.FullPath ?? string.Empty
+                        };
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
                 });
 
                 var result = new GroupFileDiscoveryDto
@@ -143,6 +159,7 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                     Date = targetDate.Date,
                     Items = (await Task.WhenAll(tasks).ConfigureAwait(false)).ToList()
                 };
+                semaphore.Dispose();
 
                 return this.ToResponse(
                     NancyModuleExtensions.ResponseCode.success,

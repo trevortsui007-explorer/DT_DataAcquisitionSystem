@@ -4,14 +4,17 @@ using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
     public class FileDiscoveryService
     {
+        private const int MetadataConcurrency = 4;
         private readonly IFileProviderFactory _factory;
         private readonly IAcquisitionFileStateService _fileStateService;
 
@@ -52,37 +55,126 @@ namespace DT_DataAcquisitionSystem.Application.Services
             DateTime startDate, 
             DateTime endDate, 
             string user = "", 
-            string pass = "")
+            string pass = "",
+            CancellationToken ct = default)
         {
             if (config == null) throw new ArgumentNullException(nameof(config));
-            
+
+            var stopwatch = Stopwatch.StartNew();
             var resultList = new List<FileDiscoveryDto>();
             var fileStates = await _fileStateService
-                .GetByConfigAndDateRangeAsync(config.Id, startDate, endDate)
+                .GetByConfigAndDateRangeAsync(config.Id, startDate, endDate, ct)
                 .ConfigureAwait(false);
             var fileStateMap = fileStates
                 .GroupBy(x => BuildStateKey(x.BusinessDate, x.FileName))
                 .ToDictionary(x => x.Key, x => x.OrderByDescending(s => s.UpdateTime).First());
 
             var folderFilesCache = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+            var credentials = ResolveCredentials(config, user, pass);
+            bool isFolderMode = string.IsNullOrWhiteSpace(config.FileNamePattern);
+            bool hasPathDayGranularity = HasDayGranularity(config.FilePathPattern);
+            bool hasMonthGranularity = HasMonthGranularity(config.FilePathPattern);
+            bool hasDayGranularity = hasPathDayGranularity ||
+                (!isFolderMode && HasDayGranularity(config.FileNamePattern));
+            string discoveryMode = isFolderMode && !hasDayGranularity && !hasMonthGranularity ? "folder-list" : "calendar";
+            string extension = NormalizeExtension(config.FileType);
 
             // 1. 按月组织返回结构，按实际解析出的目录路径缓存扫描结果
             for (var monthDate = new DateTime(startDate.Year, startDate.Month, 1); 
                  monthDate <= endDate; 
                  monthDate = monthDate.AddMonths(1))
             {
+                ct.ThrowIfCancellationRequested();
                 var monthDto = new FileDiscoveryDto
                 {
                     MonthName = monthDate.ToString("yyyy-MM"),
                     FolderPath = string.Empty,
+                    DiscoveryMode = discoveryMode,
+                    HasDayGranularity = hasDayGranularity,
                     Files = new List<FileEntryDto>()
                 };
+
+                if (discoveryMode == "folder-list")
+                {
+                    string actualFolderPath = FileDateTimeUtil.GetDateTimeFromBrace(config.FilePathPattern, monthDate);
+                    monthDto.FolderPath = actualFolderPath;
+
+                    var provider = _factory.Create(actualFolderPath, credentials.UserName, credentials.Password);
+                    var scanOptions = FolderScanOptionsUtil.FromConfig(config);
+                    IEnumerable<string> existingFiles;
+
+                    try
+                    {
+                        existingFiles = await FolderScanOptionsUtil.GetFilesAsync(provider, actualFolderPath, "*", scanOptions, ct)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch
+                    {
+                        existingFiles = Enumerable.Empty<string>();
+                    }
+
+                    var entries = existingFiles
+                        .Where(f => HasExpectedExtension(Path.GetFileName(f), extension))
+                        .Select(file =>
+                        {
+                            string fullPath = BuildDetectedFilePath(actualFolderPath, file);
+                            string actualFileName = Path.GetFileName(file);
+                            return new FileEntryDto
+                            {
+                                FileName = actualFileName,
+                                FullPath = fullPath,
+                                DetectedDate = monthDate.Date,
+                                IsMissing = false
+                            };
+                        })
+                        .ToList();
+
+                    await AttachFileMetadataAsync(entries, provider, ct).ConfigureAwait(false);
+                    foreach (var entry in entries)
+                    {
+                        AttachFileState(entry, fileStateMap);
+                        monthDto.Files.Add(entry);
+                    }
+
+                    monthDto.Files = monthDto.Files
+                        .OrderByDescending(x => x.LastWriteTime ?? DateTime.MinValue)
+                        .ThenBy(x => x.FileName)
+                        .ToList();
+
+                    resultList.Add(monthDto);
+                    continue;
+                }
+
+                if (isFolderMode && !hasPathDayGranularity && hasMonthGranularity)
+                {
+                    await AppendMonthlyFolderCalendarFilesAsync(
+                        config,
+                        monthDto,
+                        monthDate,
+                        startDate,
+                        endDate,
+                        extension,
+                        credentials,
+                        fileStateMap,
+                        ct).ConfigureAwait(false);
+
+                    if (monthDto.Files.Any())
+                    {
+                        resultList.Add(monthDto);
+                    }
+                    continue;
+                }
 
                 // 2. 迭代该月内的每一天进行比对
                 int daysInMonth = DateTime.DaysInMonth(monthDate.Year, monthDate.Month);
                 for (int d = 1; d <= daysInMonth; d++)
                 {
                     var currentDay = new DateTime(monthDate.Year, monthDate.Month, d);
+                    ct.ThrowIfCancellationRequested();
 
                     // 过滤不在查询范围内的日期
                     if (currentDay.Date < startDate.Date || currentDay.Date > endDate.Date) continue;
@@ -94,35 +186,61 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         monthDto.FolderPath = actualFolderPath;
                     }
 
+                    string expectedFileName = FileDateTimeUtil.GetProcessedFileName(config, currentDay);
+                    string expectedName = isFolderMode
+                        ? BuildFolderModeExpectedName(extension)
+                        : NormalizeExpectedFileName(expectedFileName, extension);
+
+                    if (!isFolderMode)
+                    {
+                        string expectedFullPath = CombinePath(actualFolderPath, expectedName);
+                        try
+                        {
+                            var provider = _factory.Create(actualFolderPath, credentials.UserName, credentials.Password);
+                            if (provider.Exists(expectedFullPath))
+                            {
+                                var entry = new FileEntryDto
+                                {
+                                    FileName = expectedName,
+                                    FullPath = expectedFullPath,
+                                    DetectedDate = currentDay,
+                                    IsMissing = false
+                                };
+
+                                await AttachFileMetadataAsync(entry, provider, ct).ConfigureAwait(false);
+                                AttachFileState(entry, fileStateMap);
+                                monthDto.Files.Add(entry);
+                                continue;
+                            }
+                        }
+                        catch
+                        {
+                            // 精确判断失败后继续走目录扫描兜底。
+                        }
+                    }
+
                     string folderCacheKey = actualFolderPath ?? string.Empty;
                     if (!folderFilesCache.TryGetValue(folderCacheKey, out IEnumerable<string> existingFiles))
                     {
                         try
                         {
-                            var credentials = ResolveCredentials(config, user, pass);
                             var provider = _factory.Create(actualFolderPath, credentials.UserName, credentials.Password);
                             var scanOptions = FolderScanOptionsUtil.FromConfig(config);
-                            existingFiles = await FolderScanOptionsUtil.GetFilesAsync(provider, actualFolderPath, "*", scanOptions, default)
+                            existingFiles = await FolderScanOptionsUtil.GetFilesAsync(provider, actualFolderPath, "*", scanOptions, ct)
                                 .ConfigureAwait(false);
                         }
-                        catch
+                        catch (OperationCanceledException)
                         {
-                            // 如果文件夹不存在或无法访问，标记当天文件为缺失。
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[Discovery][Warning] Scan folder failed. ConfigId={config.Id}, EqName={config.EqName}, Folder={actualFolderPath}, Error={ex.Message}");
                             existingFiles = Enumerable.Empty<string>();
                         }
 
                         folderFilesCache[folderCacheKey] = existingFiles;
                     }
-
-                    // 根据模板生成预期的文件名关键特征
-                    string expectedFileName = FileDateTimeUtil.GetProcessedFileName(config, currentDay);
-                    bool isFolderMode = string.IsNullOrWhiteSpace(config.FileNamePattern);
-
-                    // 获取配置中的后缀 (假设属性名为 config.FileExtension，如 ".csv")
-                    string extension = NormalizeExtension(config.FileType);
-                    string expectedName = isFolderMode
-                        ? BuildFolderModeExpectedName(extension)
-                        : NormalizeExpectedFileName(expectedFileName, extension);
 
                     // 3. 在文件清单中查找匹配项：文件夹模式只校验类型；普通模式校验完整文件名
                     var matches = existingFiles
@@ -135,20 +253,40 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         })
                         .ToList();
 
+                    if (!matches.Any() && !isFolderMode)
+                    {
+                        string expectedFullPath = CombinePath(actualFolderPath, expectedName);
+                        try
+                        {
+                            var provider = _factory.Create(actualFolderPath, credentials.UserName, credentials.Password);
+                            if (provider.Exists(expectedFullPath))
+                            {
+                                matches.Add(expectedFullPath);
+                            }
+                        }
+                        catch
+                        {
+                            // 保持原有缺失判断。
+                        }
+                    }
+
                     if (matches.Any())
                     {
                         // 发现文件：添加到 DTO
                         foreach (var fileName in matches)
                         {
                             string actualFileName = Path.GetFileName(fileName);
+                            string fullPath = BuildDetectedFilePath(actualFolderPath, fileName);
                             var entry = new FileEntryDto
                             {
                                 FileName = actualFileName,
-                                FullPath = BuildDetectedFilePath(actualFolderPath, fileName),
+                                FullPath = fullPath,
                                 DetectedDate = currentDay,
                                 IsMissing = false
                             };
 
+                            var provider = _factory.Create(actualFolderPath, credentials.UserName, credentials.Password);
+                            await AttachFileMetadataAsync(entry, provider, ct).ConfigureAwait(false);
                             AttachFileState(entry, fileStateMap);
                             monthDto.Files.Add(entry);
                         }
@@ -176,7 +314,173 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 }
             }
 
+            stopwatch.Stop();
+            Console.WriteLine($"[Discovery] ConfigId={config.Id}, EqName={config.EqName}, Range={startDate:yyyy-MM-dd}~{endDate:yyyy-MM-dd}, Mode={discoveryMode}, Files={resultList.Sum(x => x.Files?.Count ?? 0)}, ElapsedMs={stopwatch.ElapsedMilliseconds}");
+
             return resultList;
+        }
+
+        private async Task AppendMonthlyFolderCalendarFilesAsync(
+            AcquisitionConfig config,
+            FileDiscoveryDto monthDto,
+            DateTime monthDate,
+            DateTime startDate,
+            DateTime endDate,
+            string extension,
+            FileAccessCredentials credentials,
+            Dictionary<string, AcquisitionFileState> fileStateMap,
+            CancellationToken ct)
+        {
+            string actualFolderPath = FileDateTimeUtil.GetDateTimeFromBrace(config.FilePathPattern, monthDate);
+            monthDto.FolderPath = actualFolderPath;
+
+            var provider = _factory.Create(actualFolderPath, credentials.UserName, credentials.Password);
+            var scanOptions = FolderScanOptionsUtil.FromConfig(config);
+            IEnumerable<string> existingFiles;
+
+            try
+            {
+                existingFiles = await FolderScanOptionsUtil.GetFilesAsync(provider, actualFolderPath, "*", scanOptions, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Discovery][Warning] Scan monthly folder failed. ConfigId={config.Id}, EqName={config.EqName}, Folder={actualFolderPath}, Error={ex.Message}");
+                existingFiles = Enumerable.Empty<string>();
+            }
+
+            var entries = existingFiles
+                .Where(f => HasExpectedExtension(Path.GetFileName(f), extension))
+                .Select(file =>
+                {
+                    string fullPath = BuildDetectedFilePath(actualFolderPath, file);
+                    string actualFileName = Path.GetFileName(file);
+                    return new FileEntryDto
+                    {
+                        FileName = actualFileName,
+                        FullPath = fullPath,
+                        DetectedDate = monthDate.Date,
+                        IsMissing = false
+                    };
+                })
+                .ToList();
+
+            await AttachFileMetadataAsync(entries, provider, ct).ConfigureAwait(false);
+
+            var filesByDate = new Dictionary<DateTime, List<FileEntryDto>>();
+            foreach (var entry in entries)
+            {
+                DateTime fileDate = (entry.LastWriteTime ?? monthDate).Date;
+                if (fileDate < startDate.Date || fileDate > endDate.Date)
+                {
+                    continue;
+                }
+
+                entry.DetectedDate = fileDate;
+                AttachFileState(entry, fileStateMap);
+
+                if (!filesByDate.TryGetValue(fileDate, out var dayFiles))
+                {
+                    dayFiles = new List<FileEntryDto>();
+                    filesByDate[fileDate] = dayFiles;
+                }
+
+                dayFiles.Add(entry);
+            }
+
+            int daysInMonth = DateTime.DaysInMonth(monthDate.Year, monthDate.Month);
+            for (int d = 1; d <= daysInMonth; d++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var currentDay = new DateTime(monthDate.Year, monthDate.Month, d);
+                if (currentDay.Date < startDate.Date || currentDay.Date > endDate.Date) continue;
+
+                if (filesByDate.TryGetValue(currentDay.Date, out var dayFiles) && dayFiles.Any())
+                {
+                    monthDto.Files.AddRange(dayFiles
+                        .OrderByDescending(x => x.LastWriteTime ?? DateTime.MinValue)
+                        .ThenBy(x => x.FileName));
+                    continue;
+                }
+
+                var missing = new FileEntryDto
+                {
+                    FileName = BuildFolderModeExpectedName(extension),
+                    FullPath = actualFolderPath,
+                    DetectedDate = currentDay,
+                    IsMissing = true
+                };
+
+                AttachFileState(missing, fileStateMap);
+                monthDto.Files.Add(missing);
+            }
+        }
+
+        private bool HasDayGranularity(string pattern)
+        {
+            return !string.IsNullOrWhiteSpace(pattern) &&
+                (pattern.IndexOf("{dd}", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 pattern.IndexOf("{d}", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private bool HasMonthGranularity(string pattern)
+        {
+            return !string.IsNullOrWhiteSpace(pattern) &&
+                (pattern.IndexOf("{MM}", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 pattern.IndexOf("{M}", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private async Task AttachFileMetadataAsync(FileEntryDto entry, IFileProvider provider, CancellationToken ct)
+        {
+            if (entry == null || provider == null || string.IsNullOrWhiteSpace(entry.FullPath))
+            {
+                return;
+            }
+
+            try
+            {
+                FileMetadata metadata = await provider.GetFileMetadataAsync(entry.FullPath, ct).ConfigureAwait(false);
+                entry.LastWriteTime = metadata?.LastWriteTime;
+                entry.FileSize = metadata?.Length;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                // 元数据失败不影响巡检结果。
+            }
+        }
+
+        private async Task AttachFileMetadataAsync(List<FileEntryDto> entries, IFileProvider provider, CancellationToken ct)
+        {
+            if (entries == null || entries.Count == 0 || provider == null)
+            {
+                return;
+            }
+
+            using (var semaphore = new SemaphoreSlim(MetadataConcurrency))
+            {
+                var tasks = entries.Select(async entry =>
+                {
+                    await semaphore.WaitAsync(ct).ConfigureAwait(false);
+                    try
+                    {
+                        await AttachFileMetadataAsync(entry, provider, ct).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                });
+
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
         }
 
         /// <summary>
@@ -185,7 +489,16 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private string CombinePath(string folder, string file)
         {
             if (string.IsNullOrEmpty(folder)) return file;
-            return folder.TrimEnd('/', '\\') + "/" + file.TrimStart('/', '\\');
+            if (string.IsNullOrEmpty(file)) return folder;
+
+            string trimmedFolder = folder.TrimEnd('/', '\\');
+            string trimmedFile = file.TrimStart('/', '\\');
+            if (IsUrlPath(trimmedFolder))
+            {
+                return trimmedFolder + "/" + trimmedFile.Replace('\\', '/');
+            }
+
+            return trimmedFolder + "\\" + trimmedFile.Replace('/', '\\');
         }
 
         private string BuildDetectedFilePath(string folder, string file)
@@ -196,18 +509,35 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return CombinePath(folder, file);
         }
 
+        private bool IsUrlPath(string path)
+        {
+            return !string.IsNullOrWhiteSpace(path) &&
+                (path.StartsWith("ftp://", StringComparison.OrdinalIgnoreCase) ||
+                 path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                 path.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+        }
+
         private FileAccessCredentials ResolveCredentials(AcquisitionConfig config, string user, string pass)
         {
+            FileAccessOptions access = FileAccessOptions.FromParserOptions(config?.ParserOptions);
+            if (access.HasUserName)
+            {
+                return new FileAccessCredentials
+                {
+                    UserName = access.EffectiveUserName,
+                    Password = access.HasPassword ? access.GetPassword() : null
+                };
+            }
+
             if (!string.IsNullOrWhiteSpace(user))
             {
                 return new FileAccessCredentials { UserName = user, Password = pass };
             }
 
-            FileAccessOptions access = FileAccessOptions.FromParserOptions(config?.ParserOptions);
             return new FileAccessCredentials
             {
-                UserName = access.HasUserName ? access.EffectiveUserName : null,
-                Password = access.HasPassword ? access.GetPassword() : null
+                UserName = null,
+                Password = null
             };
         }
 

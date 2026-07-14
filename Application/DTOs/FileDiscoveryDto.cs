@@ -10,6 +10,8 @@ namespace DT_DataAcquisitionSystem.Application.DTOs
     {
         public string MonthName { get; set; }        // 示例: "2025-01"
         public string FolderPath { get; set; }       // 解析后的物理路径
+        public string DiscoveryMode { get; set; } = "calendar";
+        public bool HasDayGranularity { get; set; } = true;
         public int FileCount => Files?.Count ?? 0;   // 统计该月文件数
         public List<FileEntryDto> Files { get; set; } = new List<FileEntryDto>();
     }
@@ -23,6 +25,8 @@ namespace DT_DataAcquisitionSystem.Application.DTOs
         public string FullPath { get; set; }         // 完整路径
         public DateTime DetectedDate { get; set; }   // 该文件对应的时间点
         public bool IsMissing { get; set; }          // 扩展：如果当天应该有文件却没找到，可以标记为缺失
+        public DateTime? LastWriteTime { get; set; }
+        public long? FileSize { get; set; }
         public int? DataRowCount { get; set; }
         public int? LastStartRow { get; set; }
         public int? LastProcessedRows { get; set; }
