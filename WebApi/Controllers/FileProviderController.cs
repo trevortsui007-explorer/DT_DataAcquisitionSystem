@@ -1,4 +1,4 @@
-﻿using DT_DataAcquisitionSystem.Domain.Interfaces;
+using DT_DataAcquisitionSystem.Domain.Interfaces;
 using DT_DataAcquisitionSystem.Common.Extensions;
 using Nancy;
 using Nancy.ModelBinding;
@@ -24,7 +24,7 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
         private readonly IFileConfigService _fileConfigService;
         private readonly IAcquisitionFileStateService _fileStateService;
 
-        public FileProviderController(IFileConfigService fileConfigService) : base("/api/files")
+        public FileProviderController(IFileConfigService fileConfigService) : base("/api/data-acquisition/files")
         {
             _fileProviderFactory = FileIocHelper.GetFileProviderFactory();
             _fileConfigService = fileConfigService;

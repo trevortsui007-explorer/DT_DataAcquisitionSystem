@@ -99,8 +99,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     {
                         try
                         {
-                            var provider = _factory.Create(actualFolderPath, user, pass);
-                            existingFiles = await provider.GetFileNamesAsync(actualFolderPath, "*");
+                            var credentials = ResolveCredentials(config, user, pass);
+                            var provider = _factory.Create(actualFolderPath, credentials.UserName, credentials.Password);
+                            var scanOptions = FolderScanOptionsUtil.FromConfig(config);
+                            existingFiles = await FolderScanOptionsUtil.GetFilesAsync(provider, actualFolderPath, "*", scanOptions, default)
+                                .ConfigureAwait(false);
                         }
                         catch
                         {
@@ -141,7 +144,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                             var entry = new FileEntryDto
                             {
                                 FileName = actualFileName,
-                                FullPath = CombinePath(actualFolderPath, actualFileName),
+                                FullPath = BuildDetectedFilePath(actualFolderPath, fileName),
                                 DetectedDate = currentDay,
                                 IsMissing = false
                             };
@@ -183,6 +186,35 @@ namespace DT_DataAcquisitionSystem.Application.Services
         {
             if (string.IsNullOrEmpty(folder)) return file;
             return folder.TrimEnd('/', '\\') + "/" + file.TrimStart('/', '\\');
+        }
+
+        private string BuildDetectedFilePath(string folder, string file)
+        {
+            if (string.IsNullOrWhiteSpace(file)) return file;
+            if (file.Contains("://") || Path.IsPathRooted(file)) return file;
+
+            return CombinePath(folder, file);
+        }
+
+        private FileAccessCredentials ResolveCredentials(AcquisitionConfig config, string user, string pass)
+        {
+            if (!string.IsNullOrWhiteSpace(user))
+            {
+                return new FileAccessCredentials { UserName = user, Password = pass };
+            }
+
+            FileAccessOptions access = FileAccessOptions.FromParserOptions(config?.ParserOptions);
+            return new FileAccessCredentials
+            {
+                UserName = access.HasUserName ? access.EffectiveUserName : null,
+                Password = access.HasPassword ? access.GetPassword() : null
+            };
+        }
+
+        private class FileAccessCredentials
+        {
+            public string UserName { get; set; }
+            public string Password { get; set; }
         }
 
         private string NormalizeExtension(string extension)

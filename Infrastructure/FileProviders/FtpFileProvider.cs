@@ -65,6 +65,48 @@ namespace DT_DataAcquisitionSystem.Infrastructure
             }
         }
 
+        public async Task<FileMetadata> GetFileMetadataAsync(string filePath, CancellationToken cancellationToken = default)
+        {
+            var metadata = new FileMetadata();
+
+            try
+            {
+                var timestampRequest = CreateRequest(filePath, WebRequestMethods.Ftp.GetDateTimestamp);
+                using (cancellationToken.Register(() => timestampRequest.Abort()))
+                using (var response = (FtpWebResponse)await timestampRequest.GetResponseAsync())
+                {
+                    if (response.LastModified != DateTime.MinValue)
+                    {
+                        metadata.LastWriteTime = response.LastModified;
+                        metadata.LastWriteTimeUtc = response.LastModified.ToUniversalTime();
+                    }
+                }
+            }
+            catch
+            {
+                // 文件元数据不是采集主流程，取不到时保持空值，不阻断解析入库。
+            }
+
+            try
+            {
+                var sizeRequest = CreateRequest(filePath, WebRequestMethods.Ftp.GetFileSize);
+                using (cancellationToken.Register(() => sizeRequest.Abort()))
+                using (var response = (FtpWebResponse)await sizeRequest.GetResponseAsync())
+                {
+                    if (response.ContentLength >= 0)
+                    {
+                        metadata.Length = response.ContentLength;
+                    }
+                }
+            }
+            catch
+            {
+                // 同上，FTP 服务不支持文件大小时忽略。
+            }
+
+            return metadata;
+        }
+
         public async Task SaveFileAsync(string filePath, Stream content, bool overwrite = true, CancellationToken cancellationToken = default)
         {
             if (!overwrite && Exists(filePath))

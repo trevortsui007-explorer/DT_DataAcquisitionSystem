@@ -20,12 +20,14 @@ namespace DT_DataAcquisitionSystem.Infrastructure
                 throw new ArgumentException("路径不能为空", nameof(path));
 
             // 1. 查找能处理该路径的 Provider
-            var provider = _providers.FirstOrDefault(p => p.CanHandle(path));
+            var prototype = _providers.FirstOrDefault(p => p.CanHandle(path));
 
-            if (provider == null)
+            if (prototype == null)
             {
                 throw new NotSupportedException($"未找到支持该路径协议的 FileProvider: {path}");
             }
+
+            var provider = (IFileProvider)Activator.CreateInstance(prototype.GetType());
 
             // 2. 动态注入凭证（只对实现了 ICredentialSupported 的 Provider 生效）
             if (provider is ICredentialSupported credentialProvider && !string.IsNullOrEmpty(username))

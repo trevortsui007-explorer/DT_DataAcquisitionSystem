@@ -5,6 +5,13 @@ using System.Collections.Generic;
 
 namespace DT_DataAcquisitionSystem.Domain.Interfaces
 {
+    public class FileMetadata
+    {
+        public System.DateTime? LastWriteTime { get; set; }
+        public System.DateTime? LastWriteTimeUtc { get; set; }
+        public long? Length { get; set; }
+    }
+
     public interface IFileProvider
     {
         // 0. 路由判定（用于消除 Factory 中的 if/else）
@@ -15,6 +22,9 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
 
         // 2. 异步获取流
         Task<Stream> GetFileStreamAsync(string filePath, CancellationToken cancellationToken = default);
+
+        // 2.1 获取文件元数据
+        Task<FileMetadata> GetFileMetadataAsync(string filePath, CancellationToken cancellationToken = default);
 
         // 3. 写入文件（补全 CRUD 闭环）
         Task SaveFileAsync(string filePath, Stream content, bool overwrite = true, CancellationToken cancellationToken = default);
