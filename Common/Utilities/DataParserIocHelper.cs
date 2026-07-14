@@ -16,7 +16,7 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
 
         // 提供一个静态的解析器对应的选项类
 
-        public static ParserOptionsBase CreateOptions(string ext, string filePath, int headerRow = 1, int startRow = 2, bool hasExtFields = false)
+        public static ParserOptionsBase CreateOptions(string ext, string filePath, int headerRow = 1, int startRow = 2, bool hasExtFields = false, string extFields = null)
         {
             string normalizedExt = ext?.ToLower().TrimStart('.');
 
@@ -26,6 +26,7 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
                 {
                     FilePath = filePath,
                     HasExtFields = hasExtFields,
+                    ExtFields = extFields,
                     Separator = ",",
                     Encoding = System.Text.Encoding.UTF8,
                     HeaderRow = headerRow,
@@ -39,6 +40,7 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
                 {
                     FilePath = filePath,
                     HasExtFields = hasExtFields,
+                    ExtFields = extFields,
                     HeaderRow = headerRow,
                     StartRow = startRow
                 };

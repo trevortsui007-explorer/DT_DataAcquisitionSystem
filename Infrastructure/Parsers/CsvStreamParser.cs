@@ -67,7 +67,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure
                             fields,
                             currentRow,
                             opt.HasExtFields,
-                            opt.FilePath));
+                            opt.FilePath,
+                            opt.ExtFields,
+                            fields));
                     }
                 }
             }

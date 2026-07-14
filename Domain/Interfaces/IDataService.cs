@@ -24,6 +24,11 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
         Task BulkInsertAsync(DataTable dataTable, string destinationTableName, CancellationToken ct = default);
 
         /// <summary>
+        /// 按文件定位删除旧数据后批量入库，用于全量覆盖采集。
+        /// </summary>
+        Task ReplaceFileDataAsync(DataTable dataTable, string destinationTableName, string fullPath, string fileName, System.DateTime businessDate, CancellationToken ct = default);
+
+        /// <summary>
         /// 执行存储过程
         /// </summary>
         Task ExecuteStoredProcedureAsync(string flag, string sprocName, CancellationToken ct = default);

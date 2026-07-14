@@ -24,9 +24,14 @@
         public bool TrimFields { get; set; } = true;
 
         /// <summary>
-        /// 是否添加额外的追溯字段（fullFilePath 和 row）
+        /// 是否添加额外的追溯字段
         /// </summary>
         public bool HasExtFields { get; set; } = false;
+
+        /// <summary>
+        /// 逗号分隔的扩展字段名。
+        /// </summary>
+        public string ExtFields { get; set; }
 
         /// <summary>
         /// 当前处理的文件全路径

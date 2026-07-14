@@ -38,9 +38,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure
                     if (opt.SkipEmptyLines && IsEmptyRow(row)) continue;
 
                     object[] fieldValues = ReadRowValues(row, headers.Length, opt);
+                    object[] rawValues = ReadRowValues(row, Math.Max(headers.Length, row.LastCellNum), opt);
 
                     // 重点：r + 1 还原为 Excel 左侧显示的物理行号，传入父类映射
-                    result.Add(MapToEntity<T>(headers, fieldValues, r + 1, opt.HasExtFields, opt.FilePath));
+                    result.Add(MapToEntity<T>(headers, fieldValues, r + 1, opt.HasExtFields, opt.FilePath, opt.ExtFields, rawValues));
                 }
             }
             finally
