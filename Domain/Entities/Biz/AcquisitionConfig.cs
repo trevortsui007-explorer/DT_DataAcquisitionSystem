@@ -26,6 +26,9 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
         public string ServiceName { get; set; } // Service名（当PostProcessingType=Service时有效）
         public string Flag { get; set; } // 业务标识（如 processFailurePointInfo）
         public string FlagName { get; set; } // 业务标识名称（如 "处理坏点信息"）
+        public string ParserType { get; set; } // 解析器类型：standard-table/template-excel
+        public int? TemplateId { get; set; } // 固定模板配置 ID
+        public string ParserOptions { get; set; } // 单配置解析覆盖项（JSON）
         public DateTime CreateTime { get; set; }
 
         /// <summary>

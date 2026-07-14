@@ -1,8 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using DT_DataAcquisitionSystem.Common.Extensions;
+using DT_DataAcquisitionSystem.Common.Utilities;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
@@ -140,6 +144,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
             configTableName = string.IsNullOrEmpty(configTableName) ? DefaultConfigTable : configTableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
+            config.ParserType = string.IsNullOrWhiteSpace(config.ParserType) ? "standard-table" : config.ParserType;
+            config.ParserOptions = ProtectFileAccessOptions(config.ParserOptions, null);
 
             return _repository.Insert(config, configTableName, databaseName);
         }
@@ -153,6 +159,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
             configTableName = string.IsNullOrEmpty(configTableName) ? DefaultConfigTable : configTableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
+            config.ParserType = string.IsNullOrWhiteSpace(config.ParserType) ? "standard-table" : config.ParserType;
+            var existing = GetByIds(new[] { config.Id.ToString() }, configTableName, databaseName).FirstOrDefault();
+            config.ParserOptions = ProtectFileAccessOptions(config.ParserOptions, existing?.ParserOptions);
 
             return _repository.Update(config, configTableName, databaseName);
         }
@@ -184,5 +193,110 @@ namespace DT_DataAcquisitionSystem.Application.Services
         }
 
         #endregion
+
+        private static string ProtectFileAccessOptions(string parserOptions, string existingParserOptions)
+        {
+            JObject root = ParseOptions(parserOptions);
+            if (root == null) return parserOptions;
+
+            JObject existingRoot = ParseOptions(existingParserOptions);
+            JObject fileAccess = GetObjectIgnoreCase(root, "fileAccess");
+            JObject existingFileAccess = GetObjectIgnoreCase(existingRoot, "fileAccess");
+
+            if (fileAccess == null)
+            {
+                if (existingFileAccess != null)
+                {
+                    root["fileAccess"] = existingFileAccess.DeepClone();
+                }
+
+                return root.ToString(Formatting.None);
+            }
+
+            bool clearPassword = GetBoolIgnoreCase(fileAccess, "clearPassword");
+            string plainPassword = GetStringIgnoreCase(fileAccess, "passwordPlain");
+            string existingProtected = GetStringIgnoreCase(existingFileAccess, "passwordProtected");
+
+            RemovePropertyIgnoreCase(fileAccess, "passwordPlain");
+            RemovePropertyIgnoreCase(fileAccess, "clearPassword");
+
+            if (clearPassword)
+            {
+                RemovePropertyIgnoreCase(fileAccess, "passwordProtected");
+                RemovePropertyIgnoreCase(fileAccess, "passwordSet");
+            }
+            else if (!string.IsNullOrEmpty(plainPassword))
+            {
+                fileAccess["passwordProtected"] = CredentialProtector.Protect(plainPassword);
+                fileAccess["passwordSet"] = true;
+            }
+            else if (string.IsNullOrWhiteSpace(GetStringIgnoreCase(fileAccess, "passwordProtected")) &&
+                     !string.IsNullOrWhiteSpace(existingProtected))
+            {
+                fileAccess["passwordProtected"] = existingProtected;
+                fileAccess["passwordSet"] = true;
+            }
+
+            return root.ToString(Formatting.None);
+        }
+
+        private static JObject ParseOptions(string parserOptions)
+        {
+            if (string.IsNullOrWhiteSpace(parserOptions)) return null;
+
+            try
+            {
+                return JObject.Parse(parserOptions);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static JObject GetObjectIgnoreCase(JObject source, string propertyName)
+        {
+            if (source == null || string.IsNullOrWhiteSpace(propertyName)) return null;
+
+            foreach (var property in source.Properties())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return property.Value as JObject;
+                }
+            }
+
+            return null;
+        }
+
+        private static string GetStringIgnoreCase(JObject source, string propertyName)
+        {
+            if (source == null || string.IsNullOrWhiteSpace(propertyName)) return null;
+
+            foreach (var property in source.Properties())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return property.Value?.ToString();
+                }
+            }
+
+            return null;
+        }
+
+        private static bool GetBoolIgnoreCase(JObject source, string propertyName)
+        {
+            string value = GetStringIgnoreCase(source, propertyName);
+            return bool.TryParse(value, out bool result) && result;
+        }
+
+        private static void RemovePropertyIgnoreCase(JObject source, string propertyName)
+        {
+            if (source == null || string.IsNullOrWhiteSpace(propertyName)) return;
+
+            var property = source.Properties()
+                .FirstOrDefault(x => string.Equals(x.Name, propertyName, StringComparison.OrdinalIgnoreCase));
+            property?.Remove();
+        }
     }
 }

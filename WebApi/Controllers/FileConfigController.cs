@@ -1,4 +1,4 @@
-﻿using DT_DataAcquisitionSystem.Domain.Entities;
+using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Application.Services;
 using DT_DataAcquisitionSystem.Common.Extensions;
 using Nancy;
@@ -13,7 +13,7 @@ namespace Learun.Application.WebApi.Modules
     {
         private readonly IFileConfigService _fileConfigService;
 
-        public FileConfigController(IFileConfigService fileConfigService) : base("/api/file-configs")
+        public FileConfigController(IFileConfigService fileConfigService) : base("/api/data-acquisition/file-configs")
         {
             _fileConfigService = fileConfigService;
 

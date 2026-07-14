@@ -11,6 +11,9 @@ using DT_DataAcquisitionSystem.Common;
 using Nancy;
 using DT_DataAcquisitionSystem.Common.Utilities;
 using DT_DataAcquisitionSystem.Application.DTOs;
+using DT_DataAcquisitionSystem.Infrastructure;
+using DT_DataAcquisitionSystem.Infrastructure.Repositories;
+using Newtonsoft.Json.Linq;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
@@ -22,6 +25,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private readonly IAcquisitionLogService _logService;
         private readonly IAcquisitionFileStateService _fileStateService;
         private readonly IPostProcessingService _postProcessingService;
+        private readonly IImportTemplateService _importTemplateService;
 
         // 并发控制：防止同时处理过多任务撑爆数据库连接池
         private readonly SemaphoreSlim _concurrencySemaphore = new SemaphoreSlim(5);
@@ -29,9 +33,6 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private readonly ConcurrentHashSet<string> _processingFiles = new ConcurrentHashSet<string>();
 
         // FTP 服务器凭证
-        private string _username = "et1";
-        private string _password = "dt123456#";
-
         public DataAcquisitionService(
             IFileConfigService configService,
             IDataService dataService,
@@ -44,6 +45,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             _logService = logService;
             _fileStateService = new AcquisitionFileStateService();
             _postProcessingService = ProcessorIocHelper.CreatePostProcessingService(dataService);
+            _importTemplateService = new ImportTemplateService(new ImportTemplateRepository());
         }
 
         #region 批量处理逻辑
@@ -135,7 +137,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         {
             // 1. 获取文件路径并创建 FileProvider
             string path = FileDateTimeUtil.GetProcessedFilePath(config, processDate);
-            var provider = _fileFactory.Create(path, _username, _password);
+            var provider = CreateProvider(config, path);
 
             if (!provider.Exists(path))
             {
@@ -147,17 +149,15 @@ namespace DT_DataAcquisitionSystem.Application.Services
             // 2. 获取并解析文件流
             using (var stream = await provider.GetFileStreamAsync(path, ct))
             {
-                string ext = Path.GetExtension(path);
-                var parser = DataParserIocHelper.GetParser(ext);
-
-                // 构造配置：开启额外字段采集
-                var parserPreviewOptions = DataParserIocHelper.CreateOptions(ext, path, hasExtFields: true);
-
-                fullData = await parser.ParseAsync<Dictionary<string, object>>(stream, parserPreviewOptions, ct);
+                fullData = await ParseFileDataAsync(config, stream, Path.GetFileName(path), path, config.StartRow, ct)
+                    .ConfigureAwait(false);
             }
 
             // 3. 预处理：使数据字段和数据库表字段对应
-            var processedData = fullData.Select(row => DataMapperUtil.MapRow(row, config.FieldMappings)).ToList();
+            FileMetadata fileMetadata = await GetFileMetadataSafeAsync(provider, path, ct).ConfigureAwait(false);
+            var processedData = fullData
+                .Select(row => ApplyConfiguredFields(DataMapperUtil.MapRow(row, config.FieldMappings), config, fileMetadata))
+                .ToList();
 
             try
             {
@@ -206,14 +206,18 @@ namespace DT_DataAcquisitionSystem.Application.Services
             string fileKey = $"{config.Id}_{processDate:yyyyMMdd}";
             if (!_processingFiles.Add(fileKey)) return;
 
+            string path = null;
+            string filename = null;
+            bool hasStartedFileProcessing = false;
+
             try
             {
                 // 1. 解析路径和文件名
-                string path = FileDateTimeUtil.GetProcessedFilePath(config, processDate);   // 如果fileName为空，会返回folderPath；非空返回完整路径
+                path = FileDateTimeUtil.GetProcessedFilePath(config, processDate);   // 如果fileName为空，会返回folderPath；非空返回完整路径
 
-                string filename = FileDateTimeUtil.GetProcessedFileName(config, processDate);
+                filename = FileDateTimeUtil.GetProcessedFileName(config, processDate);
 
-                var provider = _fileFactory.Create(path, _username, _password);
+                var provider = CreateProvider(config, path);
                 List<string> targetFiles = new List<string>();
 
                 // 2. 模式判断：单文件还是文件夹
@@ -229,7 +233,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     string pattern = string.IsNullOrEmpty(config.FileType) ? "*.*" : $"*{config.FileType}";
 
                     // 调用你写好的底层方法获取文件列表
-                    var files = await provider.GetFileNamesAsync(path, pattern, false, ct);
+                    var scanOptions = FolderScanOptionsUtil.FromConfig(config);
+                    var files = await FolderScanOptionsUtil.GetFilesAsync(provider, path, pattern, scanOptions, ct)
+                        .ConfigureAwait(false);
                     if (files != null && files.Any())
                     {
                         foreach (var file in files)
@@ -254,6 +260,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     try
                     {
                         // 核心：调用独立的单文件执行器
+                        hasStartedFileProcessing = true;
                         await ProcessFileInternal(config, processDate, filePath, taskLogId, provider, ct, updateSource);
                     }
                     catch (Exception ex)
@@ -271,6 +278,16 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     throw new Exception($"配置 {config.EqName} 在 {processDate:yyyy-MM-dd} 处理失败，失败文件数：{failedFileCount}。{string.Join("；", errorMessages)}");   
                 }
             }
+            catch (Exception ex)
+            {
+                if (!hasStartedFileProcessing)
+                {
+                    await RecordConfigFailureLogAsync(config, processDate, taskLogId, path, filename, ex, ct)
+                        .ConfigureAwait(false);
+                }
+
+                throw;
+            }
             finally
             {
                 // 结束释放锁
@@ -286,7 +303,6 @@ namespace DT_DataAcquisitionSystem.Application.Services
             string actualFileName = Path.GetFileName(filePath);
             int startRow = 0;
             int processedRows = 0;
-            Exception postProcessingException = null;
 
             // 1. 初始化明细日志（每个物理文件一条记录）
             var logEntry = new AcquisitionLogEntry
@@ -294,6 +310,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 TaskLogId = taskLogId,
                 ConfigId = config.Id,
                 FileName = actualFileName,
+                FullFilePath = filePath,
                 StartTime = DateTime.Now,
                 Status = "Running"
             };
@@ -301,12 +318,19 @@ namespace DT_DataAcquisitionSystem.Application.Services
             try
             {
                 // 2. 防重与断点续传检查
-                if (await _fileStateService.ShouldSkipForSealedAsync(config.Id, businessDate, actualFileName, updateSource, ct).ConfigureAwait(false))
+                FileMetadata fileMetadata = await GetFileMetadataSafeAsync(provider, filePath, ct).ConfigureAwait(false);
+                AcquisitionFileState fileState = await _fileStateService.GetAsync(config.Id, businessDate, actualFileName, ct).ConfigureAwait(false);
+                AcquisitionModeOptions acquisitionMode = ReadAcquisitionModeOptions(config);
+                bool shouldFullReload = ShouldFullReload(acquisitionMode, fileState, fileMetadata);
+
+                if (!shouldFullReload && await _fileStateService.ShouldSkipForSealedAsync(config.Id, businessDate, actualFileName, updateSource, ct).ConfigureAwait(false))
                 {
                     return;
                 }
 
-                startRow = await _logService.GetNextStartRowAsync(config.Id, actualFileName, ct);
+                startRow = shouldFullReload
+                    ? ResolveConfiguredStartRow(config)
+                    : await _logService.GetNextStartRowAsync(config.Id, actualFileName, ct);
                 logEntry.StartRow = startRow;
 
                 if (!provider.Exists(filePath))
@@ -318,46 +342,63 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 IEnumerable<Dictionary<string, object>> fullData;
                 using (var stream = await provider.GetFileStreamAsync(filePath, ct))
                 {
-                    string ext = Path.GetExtension(filePath);
-                    var parser = DataParserIocHelper.GetParser(ext);
-                    ParserOptionsBase options = DataParserIocHelper.CreateOptions(ext, filePath, hasExtFields: true);
-                    options.StartRow = startRow; // 通知解析器跳过已读行
-
-                    fullData = await parser.ParseAsync<Dictionary<string, object>>(stream, options, ct);
+                    fullData = await ParseFileDataAsync(config, stream, actualFileName, filePath, startRow, ct)
+                        .ConfigureAwait(false);
                 }
 
                 // 4. 数据预处理
-                var processedData = fullData.Select(row => DataMapperUtil.MapRow(row, config.FieldMappings)).ToList();
+                var fullDataList = (fullData ?? Enumerable.Empty<Dictionary<string, object>>()).ToList();
+                int parsedStartRow = GetParsedStartRow(fullDataList);
+                if (parsedStartRow > 0)
+                {
+                    startRow = parsedStartRow;
+                    logEntry.StartRow = parsedStartRow;
+                }
+
+                var processedData = fullDataList
+                    .Select(row => ApplyConfiguredFields(DataMapperUtil.MapRow(row, config.FieldMappings), config, fileMetadata))
+                    .ToList();
                 processedRows = processedData.Count;
 
                 // 5. 入库
-                if (processedRows > 0)
+                if (processedRows > 0 || shouldFullReload)
                 {
                     DataTable schema = await _dataService.GetTableSchemaAsync(config.TableName);
                     if (schema == null) throw new InvalidOperationException($"表 {config.TableName} 架构不存在");
 
                     DataTable dataToInsert = _dataService.PopulateDataTable(processedData, schema);
                     var postProcessingRows = ExtractPostProcessingRowKeys(dataToInsert);
-                    await _dataService.BulkInsertAsync(dataToInsert, config.TableName, ct);
+                    if (shouldFullReload)
+                    {
+                        await _dataService.ReplaceFileDataAsync(dataToInsert, config.TableName, filePath, actualFileName, businessDate, ct)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await _dataService.BulkInsertAsync(dataToInsert, config.TableName, ct);
+                    }
 
                     // 6. 执行数据后处理 0 - 不处理；1 - 使用存储过程处理； 2- 使用C# Service处理
-                    try
+                    if (processedRows > 0)
                     {
-                        await _postProcessingService.ProcessAsync(new PostProcessingContext
+                        try
                         {
-                            Config = config,
-                            TaskLogId = taskLogId,
-                            BusinessDate = businessDate.Date,
-                            SourceTableName = config.TableName,
-                            PostTableName = config.PostTableName,
-                            FileName = actualFileName,
-                            FullPath = filePath,
-                            Rows = postProcessingRows
-                        }, ct).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        postProcessingException = ex;
+                            await _postProcessingService.ProcessAsync(new PostProcessingContext
+                            {
+                                Config = config,
+                                TaskLogId = taskLogId,
+                                BusinessDate = businessDate.Date,
+                                SourceTableName = config.TableName,
+                                PostTableName = config.PostTableName,
+                                FileName = actualFileName,
+                                FullPath = filePath,
+                                Rows = postProcessingRows
+                            }, ct).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new Exception("Post processing failed: " + ex.Message, ex);
+                        }
                     }
                 }
 
@@ -366,26 +407,21 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 logEntry.EndTime = DateTime.Now;
                 logEntry.Status = "Success";
                 await _logService.RecordLogEntryAsync(logEntry, ct);
-                await _fileStateService.UpsertSuccessAsync(config, businessDate, filePath, logEntry, updateSource, ct).ConfigureAwait(false);
+                await _fileStateService.UpsertSuccessAsync(config, businessDate, filePath, logEntry, updateSource, fileMetadata, shouldFullReload, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 // 失败：记录错误到明细日志
                 logEntry.EndTime = DateTime.Now;
                 logEntry.Status = "Failed";
-                logEntry.ErrorMessage = ex.Message.Length > 1000 ? ex.Message.Substring(0, 1000) : ex.Message;
+                logEntry.ErrorMessage = TruncateErrorMessage(ex.Message);
                 logEntry.ProcessedRows = processedRows;
 
                 await _logService.RecordLogEntryAsync(logEntry, ct);
 
                 // 继续向上抛出，让外层的 foreach 捕获（如果是文件夹模式，会被外层吃掉异常继续下一个；如果是单文件，可按需处理）
                 throw new Exception($"处理文件 {filePath} 失败: {ex.Message}", ex);
-            }
-
-            if (postProcessingException != null)
-            {
-                throw new Exception($"Post processing failed: {postProcessingException.Message}", postProcessingException);
-            }
+            }
         }
 
         #endregion
@@ -486,24 +522,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             else
                 finalStatus = "NoData";
 
-            string finalMessage;
-
-            if (finalStatus == "Success")
-            {
-                finalMessage = "任务完成";
-            }
-            else if (finalStatus == "Failed")
-            {
-                finalMessage = $"任务完成，但全部失败。失败数：{summary.FailureCount}";
-            }
-            else if (finalStatus == "PartialSuccess")
-            {
-                finalMessage = $"任务完成，部分失败。成功数：{summary.SuccessCount}，失败数：{summary.FailureCount}";
-            }
-            else
-            {
-                finalMessage = "没有可执行的数据。";
-            }
+            string finalMessage = BuildFinalMessage(finalStatus, summary);
 
             await _logService.CompleteTaskAsync(
                 taskLogId,
@@ -523,12 +542,364 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return summary;
         }
 
+        private async Task RecordConfigFailureLogAsync(AcquisitionConfig config, DateTime processDate, string taskLogId, string path, string filename, Exception ex, CancellationToken ct)
+        {
+            if (config == null || string.IsNullOrWhiteSpace(taskLogId)) return;
+
+            DateTime now = DateTime.Now;
+            var logEntry = new AcquisitionLogEntry
+            {
+                TaskLogId = taskLogId,
+                ConfigId = config.Id,
+                FileName = ResolveConfigFailureFileName(path, filename),
+                FullFilePath = ResolveConfigFailureFullFilePath(path, filename),
+                StartRow = 0,
+                ProcessedRows = 0,
+                StartTime = now,
+                EndTime = now,
+                Status = "Failed",
+                ErrorMessage = TruncateErrorMessage(ex?.Message)
+            };
+
+            await _logService.RecordLogEntryAsync(logEntry, ct).ConfigureAwait(false);
+        }
+
+        private static string ResolveConfigFailureFileName(string path, string filename)
+        {
+            if (!string.IsNullOrWhiteSpace(filename)) return filename;
+            if (string.IsNullOrWhiteSpace(path)) return "\u914d\u7f6e\u7ea7\u5931\u8d25";
+
+            string trimmed = path.TrimEnd('/', '\\');
+            string name = Path.GetFileName(trimmed);
+            return string.IsNullOrWhiteSpace(name) ? "\u914d\u7f6e\u7ea7\u5931\u8d25" : name;
+        }
+
+        private static string ResolveConfigFailureFullFilePath(string path, string filename)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            if (string.IsNullOrWhiteSpace(filename)) return path;
+
+            try
+            {
+                if (string.Equals(Path.GetFileName(path), filename, StringComparison.OrdinalIgnoreCase))
+                {
+                    return path;
+                }
+
+                return Path.Combine(path, filename);
+            }
+            catch
+            {
+                return path.TrimEnd('/', '\\') + Path.DirectorySeparatorChar + filename;
+            }
+        }
+
+        private static string BuildFinalMessage(string finalStatus, AcquisitionSummary summary)
+        {
+            string message;
+
+            if (finalStatus == "Success")
+            {
+                message = "\u4efb\u52a1\u5b8c\u6210";
+            }
+            else if (finalStatus == "Failed")
+            {
+                message = $"\u4efb\u52a1\u5b8c\u6210\uff0c\u4f46\u5168\u90e8\u5931\u8d25\u3002\u5931\u8d25\u6570\uff1a{summary.FailureCount}";
+            }
+            else if (finalStatus == "PartialSuccess")
+            {
+                message = $"\u4efb\u52a1\u5b8c\u6210\uff0c\u90e8\u5206\u5931\u8d25\u3002\u6210\u529f\u6570\uff1a{summary.SuccessCount}\uff0c\u5931\u8d25\u6570\uff1a{summary.FailureCount}";
+            }
+            else
+            {
+                message = "\u6ca1\u6709\u53ef\u6267\u884c\u7684\u6570\u636e\u3002";
+            }
+
+            if ((finalStatus == "Failed" || finalStatus == "PartialSuccess") && summary.ErrorDetails.Any())
+            {
+                string reason = string.Join("\uff1b", summary.ErrorDetails.Take(3));
+                message = $"{message}\u3002\u539f\u56e0\uff1a{reason}";
+            }
+
+            return TruncateTaskMessage(message);
+        }
+
+        private static string TruncateTaskMessage(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message)) return message;
+            return message.Length > 500 ? message.Substring(0, 500) : message;
+        }
+
+        private static string TruncateErrorMessage(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message)) return message;
+            return message.Length > 1000 ? message.Substring(0, 1000) : message;
+        }
+
         private static string ResolveManualUpdateSource(DateTime startDate, DateTime endDate)
         {
             return endDate.Date < DateTime.Today
                 ? FileStateUpdateSources.ManualRepair
                 : FileStateUpdateSources.ManualCurrent;
         }
+
+        private IFileProvider CreateProvider(AcquisitionConfig config, string path)
+        {
+            FileAccessOptions access = FileAccessOptions.FromParserOptions(config?.ParserOptions);
+            string userName = access.HasUserName ? access.EffectiveUserName : null;
+            string password = access.HasPassword ? access.GetPassword() : null;
+            return _fileFactory.Create(path, userName, password);
+        }
+
+        private class AcquisitionModeOptions
+        {
+            public bool IsFullReloadMode { get; set; }
+            public bool FullReloadWhenLastWriteTimeChanged { get; set; }
+            public bool FullReloadWhenFileSizeChanged { get; set; }
+        }
+
+        private static AcquisitionModeOptions ReadAcquisitionModeOptions(AcquisitionConfig config)
+        {
+            var result = new AcquisitionModeOptions();
+            JObject options = ParseParserOptions(config?.ParserOptions);
+            JObject acquisitionMode = GetObjectIgnoreCase(options, "acquisitionMode");
+            if (acquisitionMode == null) return result;
+
+            string mode = GetStringIgnoreCase(acquisitionMode, "mode");
+            result.IsFullReloadMode = string.Equals(mode, "full-reload", StringComparison.OrdinalIgnoreCase);
+            result.FullReloadWhenLastWriteTimeChanged = GetBoolIgnoreCase(acquisitionMode, "fullReloadWhenLastWriteTimeChanged");
+            result.FullReloadWhenFileSizeChanged = GetBoolIgnoreCase(acquisitionMode, "fullReloadWhenFileSizeChanged");
+            return result;
+        }
+
+        private static bool ShouldFullReload(AcquisitionModeOptions options, AcquisitionFileState state, FileMetadata metadata)
+        {
+            if (options == null || !options.IsFullReloadMode || state == null || metadata == null)
+                return false;
+
+            if (options.FullReloadWhenLastWriteTimeChanged && IsDateChanged(state.LastWriteTime, metadata.LastWriteTime))
+                return true;
+
+            if (options.FullReloadWhenFileSizeChanged && IsLongChanged(state.FileSize, metadata.Length))
+                return true;
+
+            return false;
+        }
+
+        private static bool IsDateChanged(DateTime? oldValue, DateTime? newValue)
+        {
+            if (!newValue.HasValue) return false;
+            if (!oldValue.HasValue) return true;
+
+            return Math.Abs((oldValue.Value - newValue.Value).TotalSeconds) >= 1;
+        }
+
+        private static bool IsLongChanged(long? oldValue, long? newValue)
+        {
+            if (!newValue.HasValue) return false;
+            if (!oldValue.HasValue) return true;
+
+            return oldValue.Value != newValue.Value;
+        }
+
+        private static int ResolveConfiguredStartRow(AcquisitionConfig config)
+        {
+            return config?.StartRow > 0 ? config.StartRow : 1;
+        }
+
+        private static async Task<FileMetadata> GetFileMetadataSafeAsync(IFileProvider provider, string filePath, CancellationToken ct)
+        {
+            try
+            {
+                return await provider.GetFileMetadataAsync(filePath, ct).ConfigureAwait(false) ?? new FileMetadata();
+            }
+            catch
+            {
+                return new FileMetadata();
+            }
+        }
+
+        private static Dictionary<string, object> ApplyConfiguredFields(
+            Dictionary<string, object> row,
+            AcquisitionConfig config,
+            FileMetadata metadata)
+        {
+            if (row == null) row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+            JObject options = ParseParserOptions(config?.ParserOptions);
+            if (options == null) return row;
+
+            JObject systemFields = GetObjectIgnoreCase(options, "systemFields");
+            if (systemFields != null)
+            {
+                ApplySystemField(row, systemFields, "fileLastWriteTime", metadata?.LastWriteTime);
+                ApplySystemField(row, systemFields, "fileLastWriteTimeUtc", metadata?.LastWriteTimeUtc);
+                ApplySystemField(row, systemFields, "fileSize", metadata?.Length);
+            }
+
+            JObject fixedFields = GetObjectIgnoreCase(options, "fixedFields");
+            if (fixedFields != null)
+            {
+                foreach (var property in fixedFields.Properties())
+                {
+                    if (string.IsNullOrWhiteSpace(property.Name)) continue;
+                    row[property.Name] = ConvertJTokenValue(property.Value);
+                }
+            }
+
+            return row;
+        }
+
+        private static JObject ParseParserOptions(string parserOptions)
+        {
+            if (string.IsNullOrWhiteSpace(parserOptions)) return null;
+
+            try
+            {
+                return JObject.Parse(parserOptions);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static JObject GetObjectIgnoreCase(JObject source, string propertyName)
+        {
+            if (source == null || string.IsNullOrWhiteSpace(propertyName)) return null;
+
+            foreach (var property in source.Properties())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return property.Value as JObject;
+                }
+            }
+
+            return null;
+        }
+
+        private static void ApplySystemField(Dictionary<string, object> row, JObject systemFields, string optionName, object value)
+        {
+            string targetField = GetStringIgnoreCase(systemFields, optionName);
+            if (string.IsNullOrWhiteSpace(targetField)) return;
+
+            row[targetField] = value;
+        }
+
+        private static string GetStringIgnoreCase(JObject source, string propertyName)
+        {
+            if (source == null || string.IsNullOrWhiteSpace(propertyName)) return null;
+
+            foreach (var property in source.Properties())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Convert.ToString(ConvertJTokenValue(property.Value));
+                }
+            }
+
+            return null;
+        }
+
+        private static bool GetBoolIgnoreCase(JObject source, string propertyName)
+        {
+            if (source == null || string.IsNullOrWhiteSpace(propertyName)) return false;
+
+            foreach (var property in source.Properties())
+            {
+                if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (property.Value == null) return false;
+                if (property.Value.Type == JTokenType.Boolean) return property.Value.Value<bool>();
+
+                bool result;
+                return bool.TryParse(Convert.ToString(ConvertJTokenValue(property.Value)), out result) && result;
+            }
+
+            return false;
+        }
+
+        private static object ConvertJTokenValue(JToken token)
+        {
+            if (token == null || token.Type == JTokenType.Null || token.Type == JTokenType.Undefined)
+                return null;
+
+            if (token.Type == JTokenType.Integer) return token.Value<long>();
+            if (token.Type == JTokenType.Float) return token.Value<decimal>();
+            if (token.Type == JTokenType.Boolean) return token.Value<bool>();
+            if (token.Type == JTokenType.Date) return token.Value<DateTime>();
+
+            return token.Type == JTokenType.String
+                ? token.Value<string>()
+                : token.ToString();
+        }
+
+        private async Task<IEnumerable<Dictionary<string, object>>> ParseFileDataAsync(
+            AcquisitionConfig config,
+            Stream stream,
+            string fileName,
+            string fullPath,
+            int startRow,
+            CancellationToken ct)
+        {
+            if (IsTemplateExcelConfig(config))
+            {
+                if (!config.TemplateId.HasValue || config.TemplateId.Value <= 0)
+                {
+                    throw new InvalidOperationException($"Config {config.EqName} uses template parser but TemplateId is empty.");
+                }
+
+                var template = _importTemplateService.GetById(config.TemplateId.Value);
+                if (template == null)
+                {
+                    throw new InvalidOperationException($"Import template not found: {config.TemplateId.Value}");
+                }
+
+                var templateParser = new TemplateExcelParser();
+                return await templateParser.ParseAsync(stream, template, config, fileName, fullPath, startRow, ct)
+                    .ConfigureAwait(false);
+            }
+
+            string ext = Path.GetExtension(fullPath);
+            var parser = DataParserIocHelper.GetParser(ext);
+            ParserOptionsBase options = DataParserIocHelper.CreateOptions(
+                ext,
+                fullPath,
+                headerRow: config?.HeaderRow > 0 ? config.HeaderRow : 1,
+                startRow: startRow > 0 ? startRow : ResolveConfiguredStartRow(config),
+                hasExtFields: !string.IsNullOrWhiteSpace(config.ExtFields),
+                extFields: config.ExtFields);
+
+            return await parser.ParseAsync<Dictionary<string, object>>(stream, options, ct)
+                .ConfigureAwait(false);
+        }
+
+        private static bool IsTemplateExcelConfig(AcquisitionConfig config)
+        {
+            return string.Equals(config?.ParserType, "template-excel", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int GetParsedStartRow(IEnumerable<Dictionary<string, object>> rows)
+        {
+            if (rows == null) return 0;
+
+            int minRow = 0;
+            foreach (var row in rows)
+            {
+                if (row == null || !row.TryGetValue("SourceRow", out object value)) continue;
+                if (!int.TryParse(Convert.ToString(value), out int sourceRow) || sourceRow <= 0) continue;
+
+                if (minRow == 0 || sourceRow < minRow)
+                {
+                    minRow = sourceRow;
+                }
+            }
+
+            return minRow;
+        }
+
         private static List<PostProcessingRowKey> ExtractPostProcessingRowKeys(DataTable dataTable)
         {
             var result = new List<PostProcessingRowKey>();

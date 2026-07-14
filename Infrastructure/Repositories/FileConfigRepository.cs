@@ -163,13 +163,13 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     [EqName], [TableName], [FilePathPattern], [FileNamePattern], [FileType],
                     [HeaderRow], [StartRow], [FieldMappings], [ExtFields], [IsEnabled],
                     [PostProcessingType], [PostTableName], [ProcedureName], [ServiceName], 
-                    [Flag], [FlagName], [CreateTime]
+                    [Flag], [FlagName], [ParserType], [TemplateId], [ParserOptions], [CreateTime]
                 )
                 VALUES(
                     @EqName, @TableName, @FilePathPattern, @FileNamePattern, @FileType,
                     @HeaderRow, @StartRow, @FieldMappings, @ExtFields, @IsEnabled,
                     @PostProcessingType, @PostTableName, @ProcedureName, @ServiceName, 
-                    @Flag, @FlagName, GETDATE()
+                    @Flag, @FlagName, @ParserType, @TemplateId, @ParserOptions, GETDATE()
                 );
                 SELECT SCOPE_IDENTITY();";
 
@@ -201,7 +201,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     ProcedureName = @ProcedureName,
                     ServiceName = @ServiceName,
                     Flag = @Flag,
-                    FlagName = @FlagName
+                    FlagName = @FlagName,
+                    ParserType = @ParserType,
+                    TemplateId = @TemplateId,
+                    ParserOptions = @ParserOptions
                 WHERE Id = @Id";
 
             return this.BaseRepository(databaseName)
