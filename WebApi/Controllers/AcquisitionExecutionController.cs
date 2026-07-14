@@ -435,9 +435,35 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
 
             try
             {
-                var result = await _executionService
-                    .GetTaskDetailsAsync(taskLogId, ct)
-                    .ConfigureAwait(false);
+                string pageNoParam = this.GetParam("pageNo");
+                string pageSizeParam = this.GetParam("pageSize");
+                string status = this.GetParam("status");
+                bool usePaging =
+                    !string.IsNullOrWhiteSpace(pageNoParam) ||
+                    !string.IsNullOrWhiteSpace(pageSizeParam) ||
+                    !string.IsNullOrWhiteSpace(status);
+
+                object result;
+
+                if (usePaging)
+                {
+                    int pageNo = int.TryParse(pageNoParam, out var pn) ? pn : 1;
+                    int pageSize = int.TryParse(pageSizeParam, out var ps) ? ps : 10;
+
+                    if (pageNo <= 0) pageNo = 1;
+                    if (pageSize <= 0) pageSize = 10;
+                    if (pageSize > 200) pageSize = 200;
+
+                    result = await _executionService
+                        .GetTaskDetailsAsync(taskLogId, pageNo, pageSize, status, ct)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    result = await _executionService
+                        .GetTaskDetailsAsync(taskLogId, ct)
+                        .ConfigureAwait(false);
+                }
 
                 return this.ToResponse(
                     NancyModuleExtensions.ResponseCode.success,

@@ -24,6 +24,8 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
         [StringLength(1000)]
         public string FileName { get; set; }
 
+        public string FullFilePath { get; set; }
+
         public int StartRow { get; set; }
 
         public int ProcessedRows { get; set; }
@@ -78,6 +80,12 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
         public DateTime? SealTime { get; set; }
 
         public DateTime? LastScanTime { get; set; }
+
+        public DateTime? LastWriteTime { get; set; }
+
+        public DateTime? LastWriteTimeUtc { get; set; }
+
+        public long? FileSize { get; set; }
 
         public DateTime CreateTime { get; set; }
 

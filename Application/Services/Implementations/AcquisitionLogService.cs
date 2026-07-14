@@ -209,6 +209,22 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return await _logRepo.GetLogsByTaskLogIdAsync(taskLogId, ct).ConfigureAwait(false);
         }
 
+        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            return await _logRepo.GetLogsByTaskLogIdAsync(taskLogId, pageNo, pageSize, status, ct).ConfigureAwait(false);
+        }
+
+        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            return await _logRepo.GetLogsCountByTaskLogIdAsync(taskLogId, status, ct).ConfigureAwait(false);
+        }
+
         public async Task<bool> UpdateTaskStatusAsync(string id, string status, int successCount, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(id)) throw new ArgumentNullException(nameof(id));
@@ -286,6 +302,16 @@ namespace DT_DataAcquisitionSystem.Application.Services
             _fileStateRepository = fileStateRepository ?? throw new ArgumentNullException(nameof(fileStateRepository));
         }
 
+        public Task<AcquisitionFileState> GetAsync(int configId, DateTime businessDate, string fileName, CancellationToken ct = default)
+        {
+            if (configId <= 0 || string.IsNullOrWhiteSpace(fileName))
+            {
+                return Task.FromResult<AcquisitionFileState>(null);
+            }
+
+            return _fileStateRepository.GetAsync(configId, businessDate.Date, fileName.Trim(), ct);
+        }
+
         public async Task<bool> ShouldSkipForSealedAsync(int configId, DateTime businessDate, string fileName, string updateSource, CancellationToken ct = default)
         {
             if (configId <= 0 || string.IsNullOrWhiteSpace(fileName))
@@ -305,7 +331,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return state != null && state.IsSealed;
         }
 
-        public async Task<bool> UpsertSuccessAsync(AcquisitionConfig config, DateTime businessDate, string fullPath, AcquisitionLogEntry logEntry, string updateSource, CancellationToken ct = default)
+        public async Task<bool> UpsertSuccessAsync(AcquisitionConfig config, DateTime businessDate, string fullPath, AcquisitionLogEntry logEntry, string updateSource, FileMetadata fileMetadata = null, bool allowSealedUpdate = false, CancellationToken ct = default)
         {
             if (config == null) throw new ArgumentNullException(nameof(config));
             if (logEntry == null) throw new ArgumentNullException(nameof(logEntry));
@@ -326,11 +352,14 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 LastProcessedRows = logEntry.ProcessedRows,
                 LastTaskLogId = logEntry.TaskLogId,
                 LastStatus = "Success",
-                LastUpdateSource = safeSource
+                LastUpdateSource = safeSource,
+                LastWriteTime = fileMetadata?.LastWriteTime,
+                LastWriteTimeUtc = fileMetadata?.LastWriteTimeUtc,
+                FileSize = fileMetadata?.Length
             };
 
             return await _fileStateRepository
-                .UpsertSuccessAsync(state, IsManualRepair(safeSource), ct)
+                .UpsertSuccessAsync(state, IsManualRepair(safeSource) || allowSealedUpdate, ct)
                 .ConfigureAwait(false);
         }
 

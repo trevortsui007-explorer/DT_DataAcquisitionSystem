@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
@@ -35,7 +35,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             // 如果想获取下一次的起点，通常是 StartRow + ProcessedRows
             const string sql = @"
                 SELECT TOP 1 ([StartRow] + [ProcessedRows]) as NextStartRow
-                FROM [DGMES].[dbo].[DA_AcquisitionLog]
+                FROM [dbo].[DA_AcquisitionLog]
                 WHERE [ConfigId] = @ConfigId AND [FileName] = @FileName AND [Status] = 'Success'
                 ORDER BY [Id] DESC";
 
@@ -106,10 +106,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
         {
             const string sql = @"
                 INSERT INTO [dbo].[DA_AcquisitionLog]
-                ([TaskLogId], [ConfigId], [FileName], [StartRow], [ProcessedRows], [StartTime], [EndTime], [Status], [ErrorMessage])
+                ([TaskLogId], [ConfigId], [FileName], [FullFilePath], [StartRow], [ProcessedRows], [StartTime], [EndTime], [Status], [ErrorMessage])
                 OUTPUT INSERTED.[Id]
                 VALUES
-                (@TaskLogId, @ConfigId, @FileName, @StartRow, @ProcessedRows, @StartTime, @EndTime, @Status, @ErrorMessage);";
+                (@TaskLogId, @ConfigId, @FileName, @FullFilePath, @StartRow, @ProcessedRows, @StartTime, @EndTime, @Status, @ErrorMessage);";
 
             using (var conn = new SqlConnection(_connectionString))
             {
@@ -121,6 +121,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     cmd.Parameters.Add("@TaskLogId", SqlDbType.NVarChar).Value = (object)entry.TaskLogId ?? DBNull.Value;
                     cmd.Parameters.Add("@ConfigId", SqlDbType.Int).Value = entry.ConfigId;
                     cmd.Parameters.Add("@FileName", SqlDbType.NVarChar, 500).Value = (object)entry.FileName ?? DBNull.Value;
+                    cmd.Parameters.Add("@FullFilePath", SqlDbType.NVarChar).Value = (object)entry.FullFilePath ?? DBNull.Value;
                     cmd.Parameters.Add("@StartRow", SqlDbType.Int).Value = entry.StartRow;
                     cmd.Parameters.Add("@ProcessedRows", SqlDbType.Int).Value = entry.ProcessedRows;
                     cmd.Parameters.Add("@StartTime", SqlDbType.DateTime).Value = (object)entry.StartTime ?? DBNull.Value;
@@ -252,6 +253,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     CAST([TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
                     [ConfigId],
                     [FileName],
+                    [FullFilePath],
                     [StartRow],
                     [ProcessedRows],
                     [StartTime],
@@ -274,6 +276,89 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     )).ConfigureAwait(false);
 
                 return result.ToList();
+            }
+        }
+
+        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT
+                    CAST([Id] AS NVARCHAR(50)) AS [Id],
+                    CAST([TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
+                    [ConfigId],
+                    [FileName],
+                    [FullFilePath],
+                    [StartRow],
+                    [ProcessedRows],
+                    [StartTime],
+                    [EndTime],
+                    [Status],
+                    [ErrorMessage]
+                FROM [dbo].[DA_AcquisitionLog]
+                WHERE [TaskLogId] = @TaskLogId
+                  AND (
+                    @Status IS NULL
+                    OR (@Status = 'Warning' AND ISNULL([ErrorMessage], '') LIKE @MissingFilePattern)
+                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorMessage], '') NOT LIKE @MissingFilePattern)
+                    OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
+                  )
+                ORDER BY [StartTime] DESC, [Id] DESC
+                OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 10 : pageSize;
+            int offset = (safePageNo - 1) * safePageSize;
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                var result = await conn.QueryAsync<AcquisitionLogEntry>(
+                    new CommandDefinition(
+                        sql,
+                        new
+                        {
+                            TaskLogId = taskLogId,
+                            Status = NormalizeDetailStatus(status),
+                            MissingFilePattern = "%\u6587\u4ef6\u672a\u627e\u5230%",
+                            Offset = offset,
+                            PageSize = safePageSize
+                        },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<AcquisitionLogEntry>();
+            }
+        }
+
+        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT COUNT(1)
+                FROM [dbo].[DA_AcquisitionLog]
+                WHERE [TaskLogId] = @TaskLogId
+                  AND (
+                    @Status IS NULL
+                    OR (@Status = 'Warning' AND ISNULL([ErrorMessage], '') LIKE @MissingFilePattern)
+                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorMessage], '') NOT LIKE @MissingFilePattern)
+                    OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
+                  );";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                return await conn.ExecuteScalarAsync<int>(
+                    new CommandDefinition(
+                        sql,
+                        new
+                        {
+                            TaskLogId = taskLogId,
+                            Status = NormalizeDetailStatus(status),
+                            MissingFilePattern = "%\u6587\u4ef6\u672a\u627e\u5230%"
+                        },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
             }
         }
 
@@ -343,6 +428,20 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 });
             }
         }
+
+        private static string NormalizeDetailStatus(string status)
+        {
+            if (string.IsNullOrWhiteSpace(status)) return null;
+
+            string normalized = status.Trim();
+            if (normalized.Equals("All", StringComparison.OrdinalIgnoreCase)) return null;
+            if (normalized.Equals("Warning", StringComparison.OrdinalIgnoreCase)) return "Warning";
+            if (normalized.Equals("Failed", StringComparison.OrdinalIgnoreCase)) return "Failed";
+            if (normalized.Equals("Success", StringComparison.OrdinalIgnoreCase)) return "Success";
+            if (normalized.Equals("Running", StringComparison.OrdinalIgnoreCase)) return "Running";
+
+            return normalized;
+        }
     }
 
     public class AcquisitionFileStateRepository : IAcquisitionFileStateRepository
@@ -378,6 +477,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     [IsSealed],
                     [SealTime],
                     [LastScanTime],
+                    [LastWriteTime],
+                    [LastWriteTimeUtc],
+                    [FileSize],
                     [CreateTime],
                     [UpdateTime]
                 FROM [dbo].[DA_AcquisitionFileState]
@@ -420,6 +522,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     [IsSealed],
                     [SealTime],
                     [LastScanTime],
+                    [LastWriteTime],
+                    [LastWriteTimeUtc],
+                    [FileSize],
                     [CreateTime],
                     [UpdateTime]
                 FROM [dbo].[DA_AcquisitionFileState]
@@ -464,6 +569,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                         @LastTaskLogId AS [LastTaskLogId],
                         @LastStatus AS [LastStatus],
                         @LastUpdateSource AS [LastUpdateSource],
+                        @LastWriteTime AS [LastWriteTime],
+                        @LastWriteTimeUtc AS [LastWriteTimeUtc],
+                        @FileSize AS [FileSize],
                         @Now AS [Now]
                 ) AS source
                 ON target.[ConfigId] = source.[ConfigId]
@@ -481,6 +589,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                         [LastTaskLogId] = source.[LastTaskLogId],
                         [LastStatus] = source.[LastStatus],
                         [LastUpdateSource] = source.[LastUpdateSource],
+                        [LastWriteTime] = source.[LastWriteTime],
+                        [LastWriteTimeUtc] = source.[LastWriteTimeUtc],
+                        [FileSize] = source.[FileSize],
                         [LastScanTime] = source.[Now],
                         [UpdateTime] = source.[Now]
                 WHEN NOT MATCHED THEN
@@ -495,6 +606,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                         [LastTaskLogId],
                         [LastStatus],
                         [LastUpdateSource],
+                        [LastWriteTime],
+                        [LastWriteTimeUtc],
+                        [FileSize],
                         [IsSealed],
                         [LastScanTime],
                         [CreateTime],
@@ -511,6 +625,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                         source.[LastTaskLogId],
                         source.[LastStatus],
                         source.[LastUpdateSource],
+                        source.[LastWriteTime],
+                        source.[LastWriteTimeUtc],
+                        source.[FileSize],
                         0,
                         source.[Now],
                         source.[Now],
@@ -535,6 +652,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                             state.LastTaskLogId,
                             state.LastStatus,
                             state.LastUpdateSource,
+                            state.LastWriteTime,
+                            state.LastWriteTimeUtc,
+                            state.FileSize,
                             AllowSealedUpdate = allowSealedUpdate ? 1 : 0,
                             Now = DateTime.Now
                         },
@@ -571,5 +691,6 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     )).ConfigureAwait(false);
             }
         }
+
     }
 }

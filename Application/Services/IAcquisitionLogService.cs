@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using DT_DataAcquisitionSystem.Domain.Entities;
+using DT_DataAcquisitionSystem.Domain.Interfaces;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
@@ -26,6 +27,12 @@ namespace DT_DataAcquisitionSystem.Application.Services
         // 获取TaskLogs记录
         Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default);
 
+        // 分页获取TaskLogs记录
+        Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default);
+
+        // 获取TaskLogs记录总数
+        Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, CancellationToken ct = default);
+
         // 运行中实时更新
         Task<bool> UpdateProgressAsync(AcquisitionTaskLogEntry entry, CancellationToken ct = default);
 
@@ -44,9 +51,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
     public interface IAcquisitionFileStateService
     {
+        Task<AcquisitionFileState> GetAsync(int configId, DateTime businessDate, string fileName, CancellationToken ct = default);
+
         Task<bool> ShouldSkipForSealedAsync(int configId, DateTime businessDate, string fileName, string updateSource, CancellationToken ct = default);
 
-        Task<bool> UpsertSuccessAsync(AcquisitionConfig config, DateTime businessDate, string fullPath, AcquisitionLogEntry logEntry, string updateSource, CancellationToken ct = default);
+        Task<bool> UpsertSuccessAsync(AcquisitionConfig config, DateTime businessDate, string fullPath, AcquisitionLogEntry logEntry, string updateSource, FileMetadata fileMetadata = null, bool allowSealedUpdate = false, CancellationToken ct = default);
 
         Task<int> SealByTaskLogAsync(string taskLogId, CancellationToken ct = default);
 

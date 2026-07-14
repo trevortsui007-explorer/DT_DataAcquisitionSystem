@@ -110,6 +110,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     TaskLogId = x.TaskLogId,
                     ConfigId = x.ConfigId,
                     FileName = x.FileName,
+                    FullFilePath = x.FullFilePath,
                     StartRow = x.StartRow,
                     ProcessedRows = x.ProcessedRows,
                     StartTime = x.StartTime,
@@ -118,6 +119,57 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     ErrorMessage = x.ErrorMessage
                 })
                 .ToList();
+        }
+
+        public async Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 10 : pageSize;
+
+            if (safePageSize > 200)
+            {
+                safePageSize = 200;
+            }
+
+            var logs = await _acquisitionLogService.GetLogsByTaskLogIdAsync(
+                taskLogId,
+                safePageNo,
+                safePageSize,
+                status,
+                ct).ConfigureAwait(false);
+
+            var total = await _acquisitionLogService.GetLogsCountByTaskLogIdAsync(
+                taskLogId,
+                status,
+                ct).ConfigureAwait(false);
+
+            var items = (logs ?? new List<AcquisitionLogEntry>())
+                .Select(x => new TaskDetailLogDto
+                {
+                    Id = x.Id,
+                    TaskLogId = x.TaskLogId,
+                    ConfigId = x.ConfigId,
+                    FileName = x.FileName,
+                    FullFilePath = x.FullFilePath,
+                    StartRow = x.StartRow,
+                    ProcessedRows = x.ProcessedRows,
+                    StartTime = x.StartTime,
+                    EndTime = x.EndTime,
+                    Status = x.Status,
+                    ErrorMessage = x.ErrorMessage
+                })
+                .ToList();
+
+            return new PagedResultDto<TaskDetailLogDto>
+            {
+                Items = items,
+                Total = total,
+                PageNo = safePageNo,
+                PageSize = safePageSize
+            };
         }
 
         public async Task<PagedResultDto<TaskLogListItemDto>> GetTaskLogsAsync(int pageNo, int pageSize, string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default)

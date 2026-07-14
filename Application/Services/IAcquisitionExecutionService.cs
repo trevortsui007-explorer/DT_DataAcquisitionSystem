@@ -21,6 +21,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
         Task<TaskStatusDto> GetTaskStatusAsync(string taskLogId, CancellationToken ct = default);
         Task<List<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, CancellationToken ct = default);
+        Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default);
 
         /// <summary> 分页获取采集任务日志列表（支持状态、时间范围及任务 ID 筛选） </summary>
         Task<PagedResultDto<TaskLogListItemDto>> GetTaskLogsAsync(int pageNo, int pageSize, string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default);

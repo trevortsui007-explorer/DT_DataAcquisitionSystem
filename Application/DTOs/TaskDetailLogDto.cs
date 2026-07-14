@@ -8,6 +8,7 @@ namespace DT_DataAcquisitionSystem.Application.DTOs
         public string TaskLogId { get; set; }
         public int ConfigId { get; set; }
         public string FileName { get; set; }
+        public string FullFilePath { get; set; }
         public int StartRow { get; set; }
         public int ProcessedRows { get; set; }
         public DateTime? StartTime { get; set; }
