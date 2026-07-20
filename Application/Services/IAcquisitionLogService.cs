@@ -28,10 +28,13 @@ namespace DT_DataAcquisitionSystem.Application.Services
         Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default);
 
         // 分页获取TaskLogs记录
-        Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default);
+        Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, CancellationToken ct = default);
 
         // 获取TaskLogs记录总数
-        Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, CancellationToken ct = default);
+        Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, CancellationToken ct = default);
+
+        // 获取TaskLogs处理行数汇总
+        Task<int> GetLogsProcessedRowsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default);
 
         // 运行中实时更新
         Task<bool> UpdateProgressAsync(AcquisitionTaskLogEntry entry, CancellationToken ct = default);
@@ -47,6 +50,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
         /// <summary> 获取符合筛选条件的采集任务日志总数 </summary>
         Task<int> GetTaskLogsCountAsync(string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default);
+
+        /// <summary> 批量获取任务明细中的文件缺失 Warning 数 </summary>
+        Task<Dictionary<string, int>> GetTaskLogWarningCountsAsync(IEnumerable<string> taskLogIds, CancellationToken ct = default);
     }
 
     public interface IAcquisitionFileStateService

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -14,6 +15,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private readonly IAcquisitionLogService _acquisitionLogService;
         private readonly IFileConfigService _fileConfigService;
         private readonly ILogCodeGenerator _logCodeGenerator;
+        private static readonly ConcurrentDictionary<string, CancellationTokenSource> RunningTasks =
+            new ConcurrentDictionary<string, CancellationTokenSource>(StringComparer.OrdinalIgnoreCase);
 
         public AcquisitionExecutionService(
             IDataAcquisitionService dataAcquisitionService,
@@ -104,24 +107,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
             var logs = await _acquisitionLogService.GetLogsByTaskLogIdAsync(taskLogId, ct).ConfigureAwait(false);
 
             return (logs ?? new List<AcquisitionLogEntry>())
-                .Select(x => new TaskDetailLogDto
-                {
-                    Id = x.Id,
-                    TaskLogId = x.TaskLogId,
-                    ConfigId = x.ConfigId,
-                    FileName = x.FileName,
-                    FullFilePath = x.FullFilePath,
-                    StartRow = x.StartRow,
-                    ProcessedRows = x.ProcessedRows,
-                    StartTime = x.StartTime,
-                    EndTime = x.EndTime,
-                    Status = x.Status,
-                    ErrorMessage = x.ErrorMessage
-                })
+                .Select(ToTaskDetailLogDto)
                 .ToList();
         }
 
-        public async Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default)
+        public async Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
                 throw new ArgumentNullException(nameof(taskLogId));
@@ -134,33 +124,47 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 safePageSize = 200;
             }
 
+            if (!string.IsNullOrWhiteSpace(errorCategory))
+            {
+                var allLogs = await _acquisitionLogService.GetLogsByTaskLogIdAsync(taskLogId, ct).ConfigureAwait(false);
+                var filteredLogs = (allLogs ?? new List<AcquisitionLogEntry>())
+                    .Where(x => IsDetailStatusMatch(x, status))
+                    .Where(x => string.Equals(GetErrorCategory(x.Status, x.ErrorMessage), errorCategory, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(x => x.StartTime)
+                    .ThenByDescending(x => x.Id)
+                    .ToList();
+
+                var pagedItems = filteredLogs
+                    .Skip((safePageNo - 1) * safePageSize)
+                    .Take(safePageSize)
+                    .Select(ToTaskDetailLogDto)
+                    .ToList();
+
+                return new PagedResultDto<TaskDetailLogDto>
+                {
+                    Items = pagedItems,
+                    Total = filteredLogs.Count,
+                    PageNo = safePageNo,
+                    PageSize = safePageSize
+                };
+            }
+
             var logs = await _acquisitionLogService.GetLogsByTaskLogIdAsync(
                 taskLogId,
                 safePageNo,
                 safePageSize,
                 status,
+                null,
                 ct).ConfigureAwait(false);
 
             var total = await _acquisitionLogService.GetLogsCountByTaskLogIdAsync(
                 taskLogId,
                 status,
+                null,
                 ct).ConfigureAwait(false);
 
             var items = (logs ?? new List<AcquisitionLogEntry>())
-                .Select(x => new TaskDetailLogDto
-                {
-                    Id = x.Id,
-                    TaskLogId = x.TaskLogId,
-                    ConfigId = x.ConfigId,
-                    FileName = x.FileName,
-                    FullFilePath = x.FullFilePath,
-                    StartRow = x.StartRow,
-                    ProcessedRows = x.ProcessedRows,
-                    StartTime = x.StartTime,
-                    EndTime = x.EndTime,
-                    Status = x.Status,
-                    ErrorMessage = x.ErrorMessage
-                })
+                .Select(ToTaskDetailLogDto)
                 .ToList();
 
             return new PagedResultDto<TaskDetailLogDto>
@@ -170,6 +174,132 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 PageNo = safePageNo,
                 PageSize = safePageSize
             };
+        }
+
+        public async Task<TaskDetailSummaryDto> GetTaskDetailSummaryAsync(string taskLogId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            var totalTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, null, null, ct);
+            var successTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, "Success", null, ct);
+            var warningTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, "Warning", null, ct);
+            var failedTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, "Failed", null, ct);
+            var processedRowsTask = _acquisitionLogService.GetLogsProcessedRowsByTaskLogIdAsync(taskLogId, ct);
+            var logsTask = _acquisitionLogService.GetLogsByTaskLogIdAsync(taskLogId, ct);
+
+            await Task.WhenAll(totalTask, successTask, warningTask, failedTask, processedRowsTask, logsTask)
+                .ConfigureAwait(false);
+
+            int errorTotal = warningTask.Result + failedTask.Result;
+            var errorCategories = (logsTask.Result ?? new List<AcquisitionLogEntry>())
+                .Select(x => GetErrorCategory(x.Status, x.ErrorMessage))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .GroupBy(x => x)
+                .Select(x => new TaskErrorCategorySummaryDto
+                {
+                    Category = x.Key,
+                    CategoryName = GetErrorCategoryName(x.Key),
+                    Count = x.Count(),
+                    Percent = errorTotal <= 0 ? 0 : Math.Round((decimal)x.Count() * 100 / errorTotal, 2)
+                })
+                .OrderByDescending(x => x.Count)
+                .ThenBy(x => x.Category)
+                .ToList();
+
+            return new TaskDetailSummaryDto
+            {
+                TaskLogId = taskLogId,
+                TotalFiles = totalTask.Result,
+                SuccessFiles = successTask.Result,
+                WarningFiles = warningTask.Result,
+                FailedFiles = failedTask.Result,
+                ProcessedRows = processedRowsTask.Result,
+                ErrorCategories = errorCategories
+            };
+        }
+
+        private static string GetErrorCategory(string status, string errorMessage)
+        {
+            if (string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            string message = errorMessage ?? string.Empty;
+
+            if (ContainsAny(message, "Post processing failed")) return "PostProcessing";
+            if (ContainsAny(message, "\u6587\u4ef6\u672a\u627e\u5230", "\u4e0d\u5b58\u5728", "\u672a\u627e\u5230\u53ef\u5904\u7406\u6587\u4ef6", "File not found")) return "FileMissing";
+            if (ContainsAny(message, "SMB \u51ed\u636e", "\u51ed\u636e", "\u7528\u6237\u540d", "\u5bc6\u7801", "\u767b\u5f55\u5931\u8d25", "\u7f51\u7edc\u8def\u5f84", "FTP \u8fde\u63a5")) return "PathCredential";
+            if (ContainsAny(message, "\u6b63\u7531\u53e6\u4e00\u8fdb\u7a0b\u4f7f\u7528", "\u88ab\u5360\u7528", "\u62d2\u7edd\u8bbf\u95ee", "Access denied")) return "PermissionLocked";
+            if (ContainsAny(message, "\u7f3a\u5c11\u5217", "\u8868\u5934", "\u683c\u5f0f", "\u6a21\u677f", "Sheet")) return "FormatHeader";
+            if (ContainsAny(message, "\u89e3\u6790", "\u8f6c\u6362", "DateTime", "Int32", "Decimal", "\u8f93\u5165\u5b57\u7b26\u4e32\u7684\u683c\u5f0f\u4e0d\u6b63\u786e")) return "DataParsing";
+            if (ContainsAny(message, "SQL", "\u6570\u636e\u5e93", "INSERT", "\u5b58\u50a8\u8fc7\u7a0b", "\u6b7b\u9501", "\u8fdd\u53cd", "\u622a\u65ad")) return "DatabaseInsert";
+
+            return "Unknown";
+        }
+
+        private static TaskDetailLogDto ToTaskDetailLogDto(AcquisitionLogEntry x)
+        {
+            string category = GetErrorCategory(x.Status, x.ErrorMessage);
+            return new TaskDetailLogDto
+            {
+                Id = x.Id,
+                TaskLogId = x.TaskLogId,
+                ConfigId = x.ConfigId,
+                FileName = x.FileName,
+                FullFilePath = x.FullFilePath,
+                StartRow = x.StartRow,
+                ProcessedRows = x.ProcessedRows,
+                StartTime = x.StartTime,
+                EndTime = x.EndTime,
+                Status = x.Status,
+                ErrorMessage = x.ErrorMessage,
+                ErrorCategory = category,
+                ErrorCategoryName = GetErrorCategoryName(category)
+            };
+        }
+
+        private static bool IsDetailStatusMatch(AcquisitionLogEntry entry, string status)
+        {
+            if (string.IsNullOrWhiteSpace(status) || status.Equals("All", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (status.Equals("Warning", StringComparison.OrdinalIgnoreCase))
+            {
+                return ContainsAny(entry.ErrorMessage ?? string.Empty, "\u6587\u4ef6\u672a\u627e\u5230");
+            }
+
+            if (status.Equals("Failed", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Equals(entry.Status, "Failed", StringComparison.OrdinalIgnoreCase)
+                    && !ContainsAny(entry.ErrorMessage ?? string.Empty, "\u6587\u4ef6\u672a\u627e\u5230");
+            }
+
+            return string.Equals(entry.Status, status, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GetErrorCategoryName(string category)
+        {
+            switch (category)
+            {
+                case "FileMissing": return "\u6587\u4ef6\u7f3a\u5931";
+                case "PathCredential": return "\u8def\u5f84/\u51ed\u636e";
+                case "PermissionLocked": return "\u6743\u9650/\u5360\u7528";
+                case "FormatHeader": return "\u6587\u4ef6\u683c\u5f0f/\u8868\u5934";
+                case "DataParsing": return "\u6570\u636e\u89e3\u6790";
+                case "DatabaseInsert": return "\u6570\u636e\u5e93\u5165\u5e93";
+                case "PostProcessing": return "\u540e\u5904\u7406";
+                case "Unknown": return "\u672a\u5206\u7c7b";
+                default: return null;
+            }
+        }
+
+        private static bool ContainsAny(string value, params string[] keywords)
+        {
+            return keywords.Any(keyword => value.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         public async Task<PagedResultDto<TaskLogListItemDto>> GetTaskLogsAsync(int pageNo, int pageSize, string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default)
@@ -226,6 +356,87 @@ namespace DT_DataAcquisitionSystem.Application.Services
             };
         }
 
+        public async Task<List<TaskLogWarningSummaryDto>> GetTaskLogWarningSummaryAsync(IEnumerable<string> taskLogIds, CancellationToken ct = default)
+        {
+            var ids = (taskLogIds ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(200)
+                .ToList();
+
+            if (ids.Count == 0)
+            {
+                return new List<TaskLogWarningSummaryDto>();
+            }
+
+            var counts = await _acquisitionLogService
+                .GetTaskLogWarningCountsAsync(ids, ct)
+                .ConfigureAwait(false);
+
+            return ids
+                .Select(id => new TaskLogWarningSummaryDto
+                {
+                    TaskLogId = id,
+                    WarningCount = counts != null && counts.TryGetValue(id, out var count) ? count : 0
+                })
+                .ToList();
+        }
+
+        public async Task<TaskStartResponseDto> CancelTaskAsync(string taskLogId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            var taskLog = await _acquisitionLogService.GetTaskLogByIdAsync(taskLogId, ct).ConfigureAwait(false);
+            if (taskLog == null)
+            {
+                return new TaskStartResponseDto
+                {
+                    TaskLogId = taskLogId,
+                    Status = "NotFound",
+                    Message = "未找到任务日志。"
+                };
+            }
+
+            if (!string.Equals(taskLog.Status, "Running", StringComparison.OrdinalIgnoreCase))
+            {
+                return new TaskStartResponseDto
+                {
+                    TaskLogId = taskLogId,
+                    Status = taskLog.Status,
+                    Message = "当前任务已结束，无需取消。"
+                };
+            }
+
+            if (!RunningTasks.TryGetValue(taskLogId, out var cts))
+            {
+                return new TaskStartResponseDto
+                {
+                    TaskLogId = taskLogId,
+                    Status = "Running",
+                    Message = "当前进程未找到运行任务，无法取消。"
+                };
+            }
+
+            cts.Cancel();
+
+            await _acquisitionLogService.CompleteTaskAsync(
+                taskLogId,
+                "Cancelled",
+                taskLog.TotalConfigs,
+                taskLog.SuccessCount,
+                taskLog.FailureCount,
+                "任务已手动取消",
+                ct).ConfigureAwait(false);
+
+            return new TaskStartResponseDto
+            {
+                TaskLogId = taskLogId,
+                Status = "Cancelled",
+                Message = "任务已手动取消。"
+            };
+        }
         private async Task<TaskStartResponseDto> StartBatchAsync(
             List<AcquisitionConfig> configs,
             DateTime startDate,
@@ -257,6 +468,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
             string taskLogId = await _acquisitionLogService.RecordTaskLogEntryAsync(taskLogEntry, ct).ConfigureAwait(false);
             string updateSource = ResolveUpdateSource(triggerType, startDate, endDate);
             bool sealOnSuccess = updateSource == FileStateUpdateSources.ScheduledD1Backfill;
+            var executionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            RunningTasks[taskLogId] = executionCts;
 
             _ = Task.Run(async () =>
             {
@@ -267,9 +480,25 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         startDate,
                         endDate,
                         taskLogId,
-                        CancellationToken.None,
+                        executionCts.Token,
                         updateSource,
                         sealOnSuccess
+                    ).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    var currentTaskLog = await _acquisitionLogService
+                        .GetTaskLogByIdAsync(taskLogId, CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    await _acquisitionLogService.CompleteTaskAsync(
+                        taskLogId,
+                        "Cancelled",
+                        currentTaskLog?.TotalConfigs ?? totalCount,
+                        currentTaskLog?.SuccessCount ?? 0,
+                        currentTaskLog?.FailureCount ?? 0,
+                        "任务已手动取消",
+                        CancellationToken.None
                     ).ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -283,6 +512,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         $"任务执行器异常终止：{ex.Message}",
                         CancellationToken.None
                     ).ConfigureAwait(false);
+                }
+                finally
+                {
+                    RunningTasks.TryRemove(taskLogId, out _);
+                    executionCts.Dispose();
                 }
             });
 

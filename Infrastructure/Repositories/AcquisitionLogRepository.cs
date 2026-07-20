@@ -284,12 +284,40 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             }
         }
 
-        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default)
+        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, CancellationToken ct = default)
         {
             const string sql = @"
+                WITH FilteredLogs AS
+                (
+                    SELECT
+                        CAST([Id] AS NVARCHAR(50)) AS [Id],
+                        CAST([TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
+                        [ConfigId],
+                        [FileName],
+                        [FullFilePath],
+                        [StartRow],
+                        [ProcessedRows],
+                        [StartTime],
+                        [EndTime],
+                        [Status],
+                        [ErrorMessage],
+                        CASE
+                            WHEN [Status] = 'Success' THEN NULL
+                            WHEN ISNULL([ErrorMessage], '') LIKE '%Post processing failed%' THEN 'PostProcessing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%文件未找到%' OR ISNULL([ErrorMessage], '') LIKE N'%不存在%' OR ISNULL([ErrorMessage], '') LIKE N'%未找到可处理文件%' OR ISNULL([ErrorMessage], '') LIKE '%File not found%' THEN 'FileMissing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%SMB 凭据%' OR ISNULL([ErrorMessage], '') LIKE N'%凭据%' OR ISNULL([ErrorMessage], '') LIKE N'%用户名%' OR ISNULL([ErrorMessage], '') LIKE N'%密码%' OR ISNULL([ErrorMessage], '') LIKE N'%登录失败%' OR ISNULL([ErrorMessage], '') LIKE N'%网络路径%' OR ISNULL([ErrorMessage], '') LIKE N'%FTP 连接%' THEN 'PathCredential'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%正由另一进程使用%' OR ISNULL([ErrorMessage], '') LIKE N'%被占用%' OR ISNULL([ErrorMessage], '') LIKE N'%拒绝访问%' OR ISNULL([ErrorMessage], '') LIKE '%Access denied%' THEN 'PermissionLocked'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%缺少列%' OR ISNULL([ErrorMessage], '') LIKE N'%表头%' OR ISNULL([ErrorMessage], '') LIKE N'%格式%' OR ISNULL([ErrorMessage], '') LIKE N'%模板%' OR ISNULL([ErrorMessage], '') LIKE '%Sheet%' THEN 'FormatHeader'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%解析%' OR ISNULL([ErrorMessage], '') LIKE N'%转换%' OR ISNULL([ErrorMessage], '') LIKE '%DateTime%' OR ISNULL([ErrorMessage], '') LIKE '%Int32%' OR ISNULL([ErrorMessage], '') LIKE '%Decimal%' OR ISNULL([ErrorMessage], '') LIKE N'%输入字符串的格式不正确%' THEN 'DataParsing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE '%SQL%' OR ISNULL([ErrorMessage], '') LIKE N'%数据库%' OR ISNULL([ErrorMessage], '') LIKE '%INSERT%' OR ISNULL([ErrorMessage], '') LIKE N'%存储过程%' OR ISNULL([ErrorMessage], '') LIKE N'%死锁%' OR ISNULL([ErrorMessage], '') LIKE N'%违反%' OR ISNULL([ErrorMessage], '') LIKE N'%截断%' THEN 'DatabaseInsert'
+                            ELSE 'Unknown'
+                        END AS [ErrorCategory]
+                    FROM [dbo].[DA_AcquisitionLog]
+                    WHERE [TaskLogId] = @TaskLogId
+                )
                 SELECT
-                    CAST([Id] AS NVARCHAR(50)) AS [Id],
-                    CAST([TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
+                    [Id],
+                    [TaskLogId],
                     [ConfigId],
                     [FileName],
                     [FullFilePath],
@@ -299,14 +327,15 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     [EndTime],
                     [Status],
                     [ErrorMessage]
-                FROM [dbo].[DA_AcquisitionLog]
-                WHERE [TaskLogId] = @TaskLogId
+                FROM FilteredLogs
+                WHERE 1 = 1
                   AND (
                     @Status IS NULL
                     OR (@Status = 'Warning' AND ISNULL([ErrorMessage], '') LIKE @MissingFilePattern)
                     OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorMessage], '') NOT LIKE @MissingFilePattern)
                     OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
                   )
+                  AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
                 ORDER BY [StartTime] DESC, [Id] DESC
                 OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
 
@@ -325,6 +354,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                         {
                             TaskLogId = taskLogId,
                             Status = NormalizeDetailStatus(status),
+                            ErrorCategory = NormalizeErrorCategory(errorCategory),
                             MissingFilePattern = "%\u6587\u4ef6\u672a\u627e\u5230%",
                             Offset = offset,
                             PageSize = safePageSize
@@ -336,18 +366,38 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             }
         }
 
-        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, CancellationToken ct = default)
+        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, CancellationToken ct = default)
         {
             const string sql = @"
+                WITH FilteredLogs AS
+                (
+                    SELECT
+                        [Status],
+                        [ErrorMessage],
+                        CASE
+                            WHEN [Status] = 'Success' THEN NULL
+                            WHEN ISNULL([ErrorMessage], '') LIKE '%Post processing failed%' THEN 'PostProcessing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%文件未找到%' OR ISNULL([ErrorMessage], '') LIKE N'%不存在%' OR ISNULL([ErrorMessage], '') LIKE N'%未找到可处理文件%' OR ISNULL([ErrorMessage], '') LIKE '%File not found%' THEN 'FileMissing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%SMB 凭据%' OR ISNULL([ErrorMessage], '') LIKE N'%凭据%' OR ISNULL([ErrorMessage], '') LIKE N'%用户名%' OR ISNULL([ErrorMessage], '') LIKE N'%密码%' OR ISNULL([ErrorMessage], '') LIKE N'%登录失败%' OR ISNULL([ErrorMessage], '') LIKE N'%网络路径%' OR ISNULL([ErrorMessage], '') LIKE N'%FTP 连接%' THEN 'PathCredential'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%正由另一进程使用%' OR ISNULL([ErrorMessage], '') LIKE N'%被占用%' OR ISNULL([ErrorMessage], '') LIKE N'%拒绝访问%' OR ISNULL([ErrorMessage], '') LIKE '%Access denied%' THEN 'PermissionLocked'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%缺少列%' OR ISNULL([ErrorMessage], '') LIKE N'%表头%' OR ISNULL([ErrorMessage], '') LIKE N'%格式%' OR ISNULL([ErrorMessage], '') LIKE N'%模板%' OR ISNULL([ErrorMessage], '') LIKE '%Sheet%' THEN 'FormatHeader'
+                            WHEN ISNULL([ErrorMessage], '') LIKE N'%解析%' OR ISNULL([ErrorMessage], '') LIKE N'%转换%' OR ISNULL([ErrorMessage], '') LIKE '%DateTime%' OR ISNULL([ErrorMessage], '') LIKE '%Int32%' OR ISNULL([ErrorMessage], '') LIKE '%Decimal%' OR ISNULL([ErrorMessage], '') LIKE N'%输入字符串的格式不正确%' THEN 'DataParsing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE '%SQL%' OR ISNULL([ErrorMessage], '') LIKE N'%数据库%' OR ISNULL([ErrorMessage], '') LIKE '%INSERT%' OR ISNULL([ErrorMessage], '') LIKE N'%存储过程%' OR ISNULL([ErrorMessage], '') LIKE N'%死锁%' OR ISNULL([ErrorMessage], '') LIKE N'%违反%' OR ISNULL([ErrorMessage], '') LIKE N'%截断%' THEN 'DatabaseInsert'
+                            ELSE 'Unknown'
+                        END AS [ErrorCategory]
+                    FROM [dbo].[DA_AcquisitionLog]
+                    WHERE [TaskLogId] = @TaskLogId
+                )
                 SELECT COUNT(1)
-                FROM [dbo].[DA_AcquisitionLog]
-                WHERE [TaskLogId] = @TaskLogId
+                FROM FilteredLogs
+                WHERE 1 = 1
                   AND (
                     @Status IS NULL
                     OR (@Status = 'Warning' AND ISNULL([ErrorMessage], '') LIKE @MissingFilePattern)
                     OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorMessage], '') NOT LIKE @MissingFilePattern)
                     OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
-                  );";
+                  )
+                  AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory);";
 
             using (var conn = new SqlConnection(_connectionString))
             {
@@ -360,8 +410,29 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                         {
                             TaskLogId = taskLogId,
                             Status = NormalizeDetailStatus(status),
+                            ErrorCategory = NormalizeErrorCategory(errorCategory),
                             MissingFilePattern = "%\u6587\u4ef6\u672a\u627e\u5230%"
                         },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+            }
+        }
+
+        public async Task<int> GetLogsProcessedRowsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT ISNULL(SUM([ProcessedRows]), 0)
+                FROM [dbo].[DA_AcquisitionLog]
+                WHERE [TaskLogId] = @TaskLogId;";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                return await conn.ExecuteScalarAsync<int>(
+                    new CommandDefinition(
+                        sql,
+                        new { TaskLogId = taskLogId },
                         cancellationToken: ct
                     )).ConfigureAwait(false);
             }
@@ -389,6 +460,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                   AND (@TaskId IS NULL OR [TaskId] = @TaskId)
                   AND (@StartTime IS NULL OR [StartTime] >= @StartTime)
                   AND (@EndTime IS NULL OR [StartTime] <= @EndTime)
+                  AND ISNULL([TriggerType], '') <> 'TST'
                 ORDER BY [StartTime] DESC, [Id] DESC
                 OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
 
@@ -420,7 +492,8 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 WHERE (@Status IS NULL OR [Status] = @Status)
                   AND (@TaskId IS NULL OR [TaskId] = @TaskId)
                   AND (@StartTime IS NULL OR [StartTime] >= @StartTime)
-                  AND (@EndTime IS NULL OR [StartTime] <= @EndTime);";
+                  AND (@EndTime IS NULL OR [StartTime] <= @EndTime)
+                  AND ISNULL([TriggerType], '') <> 'TST';";
 
             using (var conn = new SqlConnection(_connectionString))
             {
@@ -431,6 +504,46 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     StartTime = startTime,
                     EndTime = endTime
                 });
+            }
+        }
+
+        public async Task<Dictionary<string, int>> GetTaskLogWarningCountsAsync(IEnumerable<string> taskLogIds, CancellationToken ct = default)
+        {
+            var ids = (taskLogIds ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(200)
+                .ToArray();
+
+            if (ids.Length == 0)
+            {
+                return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            const string sql = @"
+                SELECT
+                    CAST([TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
+                    COUNT(1) AS [WarningCount]
+                FROM [dbo].[DA_AcquisitionLog]
+                WHERE CAST([TaskLogId] AS NVARCHAR(50)) IN @TaskLogIds
+                  AND [Status] = 'Failed'
+                  AND ISNULL([ErrorMessage], '') LIKE N'%文件未找到%'
+                GROUP BY CAST([TaskLogId] AS NVARCHAR(50));";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                var rows = await conn.QueryAsync<(string TaskLogId, int WarningCount)>(
+                    new CommandDefinition(
+                        sql,
+                        new { TaskLogIds = ids },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return rows.ToDictionary(
+                    x => x.TaskLogId,
+                    x => x.WarningCount,
+                    StringComparer.OrdinalIgnoreCase);
             }
         }
 
@@ -446,6 +559,66 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             if (normalized.Equals("Running", StringComparison.OrdinalIgnoreCase)) return "Running";
 
             return normalized;
+        }
+
+        private static string NormalizeErrorCategory(string errorCategory)
+        {
+            if (string.IsNullOrWhiteSpace(errorCategory)) return null;
+
+            string normalized = errorCategory.Trim();
+            if (normalized.Equals("All", StringComparison.OrdinalIgnoreCase)) return null;
+
+            string[] supported =
+            {
+                "FileMissing",
+                "PathCredential",
+                "PermissionLocked",
+                "FormatHeader",
+                "DataParsing",
+                "DatabaseInsert",
+                "PostProcessing",
+                "Unknown"
+            };
+
+            return supported.FirstOrDefault(x => x.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static object BuildDetailQueryParams(string taskLogId, string status, string errorCategory, int? offset = null, int? pageSize = null)
+        {
+            return new
+            {
+                TaskLogId = taskLogId,
+                Status = NormalizeDetailStatus(status),
+                ErrorCategory = NormalizeErrorCategory(errorCategory),
+                MissingFilePattern = "%\u6587\u4ef6\u672a\u627e\u5230%",
+                FileMissingPattern1 = "%\u6587\u4ef6\u672a\u627e\u5230%",
+                FileMissingPattern2 = "%\u4e0d\u5b58\u5728%",
+                FileMissingPattern3 = "%\u672a\u627e\u5230\u53ef\u5904\u7406\u6587\u4ef6%",
+                PathCredentialPattern1 = "%SMB \u51ed\u636e%",
+                PathCredentialPattern2 = "%\u51ed\u636e%",
+                PathCredentialPattern3 = "%\u7528\u6237\u540d%",
+                PathCredentialPattern4 = "%\u5bc6\u7801%",
+                PathCredentialPattern5 = "%\u767b\u5f55\u5931\u8d25%",
+                PathCredentialPattern6 = "%\u7f51\u7edc\u8def\u5f84%",
+                PathCredentialPattern7 = "%FTP \u8fde\u63a5%",
+                PermissionLockedPattern1 = "%\u6b63\u7531\u53e6\u4e00\u8fdb\u7a0b\u4f7f\u7528%",
+                PermissionLockedPattern2 = "%\u88ab\u5360\u7528%",
+                PermissionLockedPattern3 = "%\u62d2\u7edd\u8bbf\u95ee%",
+                FormatHeaderPattern1 = "%\u7f3a\u5c11\u5217%",
+                FormatHeaderPattern2 = "%\u8868\u5934%",
+                FormatHeaderPattern3 = "%\u683c\u5f0f%",
+                FormatHeaderPattern4 = "%\u6a21\u677f%",
+                DataParsingPattern1 = "%\u89e3\u6790%",
+                DataParsingPattern2 = "%\u8f6c\u6362%",
+                DataParsingPattern3 = "%\u8f93\u5165\u5b57\u7b26\u4e32\u7684\u683c\u5f0f\u4e0d\u6b63\u786e%",
+                DatabaseInsertPattern1 = "%\u6570\u636e\u5e93%",
+                DatabaseInsertPattern2 = "%\u5b58\u50a8\u8fc7\u7a0b%",
+                DatabaseInsertPattern3 = "%\u6b7b\u9501%",
+                DatabaseInsertPattern4 = "%\u8fdd\u53cd%",
+                DatabaseInsertPattern5 = "%\u622a\u65ad%",
+                Offset = offset ?? 0,
+                PageSize = pageSize ?? 10
+            };
         }
     }
 

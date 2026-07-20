@@ -15,5 +15,7 @@ namespace DT_DataAcquisitionSystem.Application.DTOs
         public DateTime? EndTime { get; set; }
         public string Status { get; set; }
         public string ErrorMessage { get; set; }
+        public string ErrorCategory { get; set; }
+        public string ErrorCategoryName { get; set; }
     }
 }

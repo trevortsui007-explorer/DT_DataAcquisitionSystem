@@ -3,6 +3,7 @@ using System.Configuration;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using DT_DataAcquisitionSystem.Application.DTOs;
 using DT_DataAcquisitionSystem.Application.Services;
 using DT_DataAcquisitionSystem.Common.Extensions;
 using Learun.Application.WebApi;
@@ -47,16 +48,25 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
             // 5. 根据配置查询条件 + 时间范围启动
             Post["/start/configs-range", true] = async (p, ct) => await StartConfigsRange(p, ct);
 
+            // 6. 取消运行中的采集任务
+            Post["/{taskLogId}/cancel", true] = async (p, ct) => await CancelTask(p, ct);
+
             // --- 查询接口 ---
 
-            // 6. 查询任务状态
+            // 7. 查询任务状态
             Get["/{taskLogId}/status", true] = async (p, ct) => await GetTaskStatus(p, ct);
 
-            // 7. 查询任务明细
+            // 8. 查询任务明细统计
+            Get["/{taskLogId}/details/summary", true] = async (p, ct) => await GetTaskDetailSummary(p, ct);
+
+            // 9. 查询任务明细
             Get["/{taskLogId}/details", true] = async (p, ct) => await GetTaskDetails(p, ct);
 
-            // 8. 查询任务列表
+            // 10. 查询任务列表
             Get["/task-logs", true] = async (p, ct) => await GetTaskLogs(p, ct);
+
+            // 11. 批量查询历史任务文件缺失 Warning 汇总
+            Post["/task-logs/warning-summary", true] = async (p, ct) => await GetTaskLogWarningSummary(p, ct);
         }
 
         #region 启动接口
@@ -373,6 +383,42 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
             return true;
         }
 
+        /// <summary>
+        /// POST /{taskLogId}/cancel
+        /// </summary>
+        private async Task<Response> CancelTask(dynamic p, CancellationToken ct)
+        {
+            string taskLogId = (string)p.taskLogId;
+
+            if (string.IsNullOrWhiteSpace(taskLogId))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：taskLogId 不能为空",
+                    null);
+            }
+
+            try
+            {
+                var result = await _executionService
+                    .CancelTaskAsync(taskLogId, ct)
+                    .ConfigureAwait(false);
+
+                bool success = result != null && string.Equals(result.Status, "Cancelled", StringComparison.OrdinalIgnoreCase);
+
+                return this.ToResponse(
+                    success ? NancyModuleExtensions.ResponseCode.success : NancyModuleExtensions.ResponseCode.fail,
+                    result?.Message ?? "取消任务失败",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"取消任务异常: {ex.Message}",
+                    null);
+            }
+        }
         #region 查询接口
 
         /// <summary>
@@ -438,10 +484,12 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                 string pageNoParam = this.GetParam("pageNo");
                 string pageSizeParam = this.GetParam("pageSize");
                 string status = this.GetParam("status");
+                string errorCategory = this.GetParam("errorCategory");
                 bool usePaging =
                     !string.IsNullOrWhiteSpace(pageNoParam) ||
                     !string.IsNullOrWhiteSpace(pageSizeParam) ||
-                    !string.IsNullOrWhiteSpace(status);
+                    !string.IsNullOrWhiteSpace(status) ||
+                    !string.IsNullOrWhiteSpace(errorCategory);
 
                 object result;
 
@@ -455,7 +503,7 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                     if (pageSize > 200) pageSize = 200;
 
                     result = await _executionService
-                        .GetTaskDetailsAsync(taskLogId, pageNo, pageSize, status, ct)
+                        .GetTaskDetailsAsync(taskLogId, pageNo, pageSize, status, errorCategory, ct)
                         .ConfigureAwait(false);
                 }
                 else
@@ -475,6 +523,41 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                 return this.ToResponse(
                     NancyModuleExtensions.ResponseCode.fail,
                     $"获取任务明细异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// GET /{taskLogId}/details/summary
+        /// </summary>
+        private async Task<Response> GetTaskDetailSummary(dynamic p, CancellationToken ct)
+        {
+            string taskLogId = (string)p.taskLogId;
+
+            if (string.IsNullOrWhiteSpace(taskLogId))
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：taskLogId 不能为空",
+                    null);
+            }
+
+            try
+            {
+                var result = await _executionService
+                    .GetTaskDetailSummaryAsync(taskLogId, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取任务明细统计成功",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"获取任务明细统计异常: {ex.Message}",
                     null);
             }
         }
@@ -512,6 +595,32 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                 return this.ToResponse(
                     NancyModuleExtensions.ResponseCode.fail,
                     $"获取任务日志列表异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// POST /task-logs/warning-summary
+        /// </summary>
+        private async Task<Response> GetTaskLogWarningSummary(dynamic p, CancellationToken ct)
+        {
+            try
+            {
+                var request = this.Bind<TaskLogWarningSummaryRequestDto>() ?? new TaskLogWarningSummaryRequestDto();
+                var result = await _executionService
+                    .GetTaskLogWarningSummaryAsync(request.TaskLogIds, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取任务 Warning 汇总成功",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"获取任务 Warning 汇总异常: {ex.Message}",
                     null);
             }
         }

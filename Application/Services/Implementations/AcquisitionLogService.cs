@@ -73,9 +73,10 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 entry.TriggerType = entry.TriggerType.Trim().ToUpperInvariant();
 
                 if (entry.TriggerType != TaskTriggerTypes.Manual &&
-                    entry.TriggerType != TaskTriggerTypes.Scheduled)
+                    entry.TriggerType != TaskTriggerTypes.Scheduled &&
+                    entry.TriggerType != TaskTriggerTypes.Test)
                 {
-                    throw new InvalidOperationException("记录任务总日志失败：TriggerType 只能是 MAN 或 SCH。");
+                    throw new InvalidOperationException("记录任务总日志失败：TriggerType 只能是 MAN、SCH 或 TST。");
                 }
             }
 
@@ -193,6 +194,24 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return await _logRepo.GetTaskLogsCountAsync(status, startTime, endTime, taskId, ct).ConfigureAwait(false);
         }
 
+        public async Task<Dictionary<string, int>> GetTaskLogWarningCountsAsync(IEnumerable<string> taskLogIds, CancellationToken ct = default)
+        {
+            var ids = (taskLogIds ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(200)
+                .ToArray();
+
+            if (ids.Length == 0)
+            {
+                return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            return await _logRepo.GetTaskLogWarningCountsAsync(ids, ct).ConfigureAwait(false)
+                ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        }
+
         public async Task<AcquisitionTaskLogEntry> GetTaskLogByIdAsync(string taskLogId, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
@@ -209,20 +228,28 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return await _logRepo.GetLogsByTaskLogIdAsync(taskLogId, ct).ConfigureAwait(false);
         }
 
-        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default)
+        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
                 throw new ArgumentNullException(nameof(taskLogId));
 
-            return await _logRepo.GetLogsByTaskLogIdAsync(taskLogId, pageNo, pageSize, status, ct).ConfigureAwait(false);
+            return await _logRepo.GetLogsByTaskLogIdAsync(taskLogId, pageNo, pageSize, status, errorCategory, ct).ConfigureAwait(false);
         }
 
-        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, CancellationToken ct = default)
+        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
                 throw new ArgumentNullException(nameof(taskLogId));
 
-            return await _logRepo.GetLogsCountByTaskLogIdAsync(taskLogId, status, ct).ConfigureAwait(false);
+            return await _logRepo.GetLogsCountByTaskLogIdAsync(taskLogId, status, errorCategory, ct).ConfigureAwait(false);
+        }
+
+        public async Task<int> GetLogsProcessedRowsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            return await _logRepo.GetLogsProcessedRowsByTaskLogIdAsync(taskLogId, ct).ConfigureAwait(false);
         }
 
         public async Task<bool> UpdateTaskStatusAsync(string id, string status, int successCount, CancellationToken ct = default)

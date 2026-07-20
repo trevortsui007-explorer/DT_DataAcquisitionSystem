@@ -18,12 +18,17 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
         Task<TaskStartResponseDto> StartByRangeAsync(AcquisitionConfig config, DateTime startDate, DateTime endDate, CancellationToken ct = default);
         Task<TaskStartResponseDto> StartConfigsByRangeAsync(FileConfigQueryOptions options, DateTime startDate, DateTime endDate, CancellationToken ct = default);
+        Task<TaskStartResponseDto> CancelTaskAsync(string taskLogId, CancellationToken ct = default);
 
         Task<TaskStatusDto> GetTaskStatusAsync(string taskLogId, CancellationToken ct = default);
         Task<List<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, CancellationToken ct = default);
-        Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, CancellationToken ct = default);
+        Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, CancellationToken ct = default);
+        Task<TaskDetailSummaryDto> GetTaskDetailSummaryAsync(string taskLogId, CancellationToken ct = default);
 
         /// <summary> 分页获取采集任务日志列表（支持状态、时间范围及任务 ID 筛选） </summary>
         Task<PagedResultDto<TaskLogListItemDto>> GetTaskLogsAsync(int pageNo, int pageSize, string status = null, DateTime? startTime = null, DateTime? endTime = null, int? taskId = null, CancellationToken ct = default);
+
+        /// <summary> 批量获取历史任务文件缺失 Warning 汇总 </summary>
+        Task<List<TaskLogWarningSummaryDto>> GetTaskLogWarningSummaryAsync(IEnumerable<string> taskLogIds, CancellationToken ct = default);
     }
 }

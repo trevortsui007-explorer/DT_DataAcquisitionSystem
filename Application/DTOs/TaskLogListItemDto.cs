@@ -18,4 +18,15 @@ namespace DT_DataAcquisitionSystem.Application.DTOs
         public DateTime? EndTime { get; set; }
         public string Message { get; set; }
     }
+
+    public class TaskLogWarningSummaryRequestDto
+    {
+        public string[] TaskLogIds { get; set; }
+    }
+
+    public class TaskLogWarningSummaryDto
+    {
+        public string TaskLogId { get; set; }
+        public int WarningCount { get; set; }
+    }
 }
