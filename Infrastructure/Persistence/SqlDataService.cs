@@ -384,7 +384,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Persistence
         {
             if (t == typeof(string)) return string.Empty;
             if (t == typeof(Guid)) return Guid.NewGuid();
-            if (t == typeof(DateTime)) return DateTime.UtcNow;
+            if (t == typeof(DateTime)) return DateTime.Now;
             if (t == typeof(bool)) return false;
             if (t.IsValueType) return Activator.CreateInstance(t); // 处理所有数值类型
             return DBNull.Value;

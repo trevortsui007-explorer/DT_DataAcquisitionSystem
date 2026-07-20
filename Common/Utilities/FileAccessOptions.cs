@@ -11,6 +11,7 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
         public string PasswordPlain { get; set; }
         public bool PasswordSet { get; set; }
         public bool ClearPassword { get; set; }
+        public bool UseCurrentWindowsIdentity { get; set; }
 
         public bool HasUserName => !string.IsNullOrWhiteSpace(UserName);
         public bool HasPassword => !string.IsNullOrWhiteSpace(PasswordPlain) || !string.IsNullOrWhiteSpace(PasswordProtected);
@@ -49,6 +50,7 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
                 result.PasswordPlain = GetStringIgnoreCase(fileAccess, "passwordPlain");
                 result.PasswordSet = GetBoolIgnoreCase(fileAccess, "passwordSet");
                 result.ClearPassword = GetBoolIgnoreCase(fileAccess, "clearPassword");
+                result.UseCurrentWindowsIdentity = GetBoolIgnoreCase(fileAccess, "useCurrentWindowsIdentity");
             }
             catch
             {

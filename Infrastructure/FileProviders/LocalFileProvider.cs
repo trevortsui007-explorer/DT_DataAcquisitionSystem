@@ -55,12 +55,20 @@ namespace DT_DataAcquisitionSystem.Infrastructure
 
                 var connection = SmbConnectionScope.ConnectIfNeeded(filePath, _userName, _password);
 
-                // 使用异步标志打开文件流
-                var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+                // Allow readers to open files that are still being written by devices or Excel.
+                var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, useAsync: true);
                 return Task.FromResult<Stream>(new CredentialScopedStream(stream, connection));
             }
             catch (Exception ex)
             {
+                if (IsSharingOrLockViolation(ex))
+                {
+                    return Task.FromException<Stream>(
+                        new IOException(
+                            ex.Message + " 该文件可能被独占锁定，当前读取模式已允许共享读写；请关闭占用程序，或后续启用复制采集/VSS方案。",
+                            ex));
+                }
+
                 return Task.FromException<Stream>(ex);
             }
         }
@@ -166,6 +174,15 @@ namespace DT_DataAcquisitionSystem.Infrastructure
                         File.Delete(fullPath);
                 }
             }, cancellationToken);
+        }
+
+        private static bool IsSharingOrLockViolation(Exception ex)
+        {
+            var ioException = ex as IOException;
+            if (ioException == null) return false;
+
+            int errorCode = ioException.HResult & 0xFFFF;
+            return errorCode == 32 || errorCode == 33;
         }
 
         private sealed class CredentialScopedStream : Stream

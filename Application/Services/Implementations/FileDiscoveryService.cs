@@ -112,8 +112,9 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     {
                         throw;
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        Console.WriteLine($"[Discovery][Warning] Scan folder-list failed. ConfigId={config.Id}, EqName={config.EqName}, Folder={actualFolderPath}, Error={ex.Message}");
                         existingFiles = Enumerable.Empty<string>();
                     }
 
@@ -520,6 +521,15 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private FileAccessCredentials ResolveCredentials(AcquisitionConfig config, string user, string pass)
         {
             FileAccessOptions access = FileAccessOptions.FromParserOptions(config?.ParserOptions);
+            if (access.UseCurrentWindowsIdentity)
+            {
+                return new FileAccessCredentials
+                {
+                    UserName = null,
+                    Password = null
+                };
+            }
+
             if (access.HasUserName)
             {
                 return new FileAccessCredentials

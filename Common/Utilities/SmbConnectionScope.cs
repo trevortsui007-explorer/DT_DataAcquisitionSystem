@@ -75,6 +75,13 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
                 return EmptyDisposable.Instance;
             }
 
+            // Empty account means using the current Windows identity. Do not register
+            // credentials or call WNetAddConnection2 in this mode.
+            if (string.IsNullOrWhiteSpace(userName))
+            {
+                return EmptyDisposable.Instance;
+            }
+
             CredentialDescriptor credential =
                 CreateCredentialDescriptor(userName, password);
 
@@ -349,6 +356,51 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
                     entry.IsConnected = true;
                     entry.ConnectedTime = DateTime.Now;
                     return;
+                }
+
+                if (result == ErrorSessionCredentialConflict &&
+                    !string.IsNullOrWhiteSpace(userName) &&
+                    entry.ActiveLeaseCount == 0)
+                {
+                    int disconnectResult = WNetCancelConnection2(
+                        entry.ShareRoot,
+                        0,
+                        false);
+
+                    if (disconnectResult == NoError ||
+                        disconnectResult == ErrorNotConnected)
+                    {
+                        entry.IsConnected = false;
+
+                        result = WNetAddConnection2(
+                            ref resource,
+                            password,
+                            userName,
+                            0);
+
+                        if (result == NoError)
+                        {
+                            entry.IsConnected = true;
+                            entry.ConnectedTime = DateTime.Now;
+                            return;
+                        }
+
+                        throw new Win32Exception(
+                            result,
+                            BuildErrorMessage(
+                                entry.ShareRoot,
+                                userName,
+                                result) +
+                            $" 同共享自动断开后重试失败，Win32Error={result}。");
+                    }
+
+                    throw new Win32Exception(
+                        result,
+                        BuildErrorMessage(
+                            entry.ShareRoot,
+                            userName,
+                            result) +
+                        $" 同共享自动断开失败，Win32Error={disconnectResult}，Reason={new Win32Exception(disconnectResult).Message}。");
                 }
 
                 throw new Win32Exception(

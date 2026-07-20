@@ -213,6 +213,19 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 return root.ToString(Formatting.None);
             }
 
+            bool useCurrentWindowsIdentity = GetBoolIgnoreCase(fileAccess, "useCurrentWindowsIdentity");
+            fileAccess["useCurrentWindowsIdentity"] = useCurrentWindowsIdentity;
+            if (useCurrentWindowsIdentity)
+            {
+                RemovePropertyIgnoreCase(fileAccess, "domain");
+                RemovePropertyIgnoreCase(fileAccess, "userName");
+                RemovePropertyIgnoreCase(fileAccess, "passwordPlain");
+                RemovePropertyIgnoreCase(fileAccess, "passwordProtected");
+                RemovePropertyIgnoreCase(fileAccess, "passwordSet");
+                RemovePropertyIgnoreCase(fileAccess, "clearPassword");
+                return root.ToString(Formatting.None);
+            }
+
             bool clearPassword = GetBoolIgnoreCase(fileAccess, "clearPassword");
             string plainPassword = GetStringIgnoreCase(fileAccess, "passwordPlain");
             string existingProtected = GetStringIgnoreCase(existingFileAccess, "passwordProtected");

@@ -62,6 +62,10 @@ namespace DT_DataAcquisitionSystem.Infrastructure
                 {
                     throw new OperationCanceledException("FTP获取文件流操作已被取消", ex, cancellationToken);
                 }
+                catch (WebException ex)
+                {
+                    throw new IOException(BuildDownloadErrorMessage(filePath, ex), ex);
+                }
             }
         }
 
@@ -221,6 +225,40 @@ namespace DT_DataAcquisitionSystem.Infrastructure
             request.UseBinary = true;
             request.KeepAlive = false;
             return request;
+        }
+
+        private static string BuildDownloadErrorMessage(string filePath, WebException ex)
+        {
+            var response = ex.Response as FtpWebResponse;
+            if (response != null)
+            {
+                if (response.StatusCode == FtpStatusCode.ActionNotTakenFileUnavailable)
+                {
+                    return $"FTP文件不可用或不存在: {filePath}。Status={response.StatusCode}，{response.StatusDescription}";
+                }
+
+                if (response.StatusCode == FtpStatusCode.NotLoggedIn ||
+                    response.StatusCode == FtpStatusCode.ActionNotTakenFileUnavailableOrBusy)
+                {
+                    return $"FTP权限、登录或文件忙导致下载失败: {filePath}。Status={response.StatusCode}，{response.StatusDescription}";
+                }
+
+                return $"FTP下载失败: {filePath}。Status={response.StatusCode}，{response.StatusDescription}";
+            }
+
+            if (ex.Status == WebExceptionStatus.Timeout)
+            {
+                return $"FTP下载超时: {filePath}。请检查FTP服务器响应或网络连接。";
+            }
+
+            if (ex.Status == WebExceptionStatus.ConnectFailure ||
+                ex.Status == WebExceptionStatus.NameResolutionFailure ||
+                ex.Status == WebExceptionStatus.ProxyNameResolutionFailure)
+            {
+                return $"FTP连接失败: {filePath}。请检查FTP地址、网络和服务器状态。";
+            }
+
+            return $"FTP下载失败: {filePath}。{ex.Message}";
         }
 
         private bool IsMatch(string fileName, string searchPattern)
