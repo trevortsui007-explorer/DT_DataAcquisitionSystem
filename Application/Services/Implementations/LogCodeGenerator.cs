@@ -53,7 +53,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         }
 
         /// <summary>
-        /// 标准化触发类型，目前只允许 MAN / SCH
+        /// 标准化触发类型，目前只允许 MAN / SCH / TST
         /// </summary>
         private static string NormalizeTriggerType(string triggerType)
         {
@@ -64,12 +64,12 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
             string normalized = triggerType.Trim().ToUpperInvariant();
 
-            if (normalized == "MAN" || normalized == "SCH")
+            if (normalized == "MAN" || normalized == "SCH" || normalized == "TST")
             {
                 return normalized;
             }
 
-            throw new InvalidOperationException("生成任务编号失败：TriggerType 仅允许 MAN 或 SCH。");
+            throw new InvalidOperationException("生成任务编号失败：TriggerType 仅允许 MAN、SCH 或 TST。");
         }
     }
 }

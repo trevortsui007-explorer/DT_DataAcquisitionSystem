@@ -14,6 +14,11 @@
         /// 定时任务触发
         /// </summary>
         public const string Scheduled = "SCH";
+
+        /// <summary>
+        /// 测试采集触发
+        /// </summary>
+        public const string Test = "TST";
     }
 
     /// <summary>

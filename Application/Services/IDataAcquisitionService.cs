@@ -8,6 +8,14 @@ using Nancy;
 
 namespace DT_DataAcquisitionSystem.Application.Services
 {
+    public class AcquisitionTestExecutionOptions
+    {
+        public bool ForceConfiguredStartRow { get; set; }
+        public bool SkipFileStateUpdate { get; set; }
+        public bool BypassSealedSkip { get; set; }
+        public bool DisableFullReload { get; set; }
+    }
+
     public interface IDataAcquisitionService
     {
         // 任务采集
@@ -29,7 +37,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         Task<Response> ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, CancellationToken ct = default);
 
         // 单个配置单日执行（带 taskLogId，用于写明细日志）
-        Task ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, string taskLogId, CancellationToken ct = default, string updateSource = null);
+        Task ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, string taskLogId, CancellationToken ct = default, string updateSource = null, AcquisitionTestExecutionOptions testOptions = null);
 
 
         // 执行器外部已创建 taskLogId，由这里负责真正批量执行并实时更新进度

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -196,14 +196,16 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// <summary>
         /// 处理单个配置 (支持单文件模式 和 文件夹批量模式)
         /// </summary>
-        public async Task ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, string taskLogId, CancellationToken ct = default, string updateSource = null)
+        public async Task ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, string taskLogId, CancellationToken ct = default, string updateSource = null, AcquisitionTestExecutionOptions testOptions = null)
         {
             updateSource = string.IsNullOrWhiteSpace(updateSource)
                 ? ResolveManualUpdateSource(processDate, processDate)
                 : updateSource;
 
             // 并发锁：防止重复启动同一任务
-            string fileKey = $"{config.Id}_{processDate:yyyyMMdd}";
+            string fileKey = testOptions == null
+                ? $"{config.Id}_{processDate:yyyyMMdd}"
+                : $"{config.Id}_{processDate:yyyyMMdd}_{taskLogId}";
             if (!_processingFiles.Add(fileKey)) return;
 
             string path = null;
@@ -261,7 +263,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     {
                         // 核心：调用独立的单文件执行器
                         hasStartedFileProcessing = true;
-                        await ProcessFileInternal(config, processDate, filePath, taskLogId, provider, ct, updateSource);
+                        await ProcessFileInternal(config, processDate, filePath, taskLogId, provider, ct, updateSource, testOptions);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
                     }
                     catch (Exception ex)
                     {
@@ -298,7 +304,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// <summary>
         /// 核心执行器：处理具体的物理文件（包含断点续传、解析、入库、写日志）
         /// </summary>
-        private async Task ProcessFileInternal(AcquisitionConfig config, DateTime businessDate, string filePath, string taskLogId, IFileProvider provider, CancellationToken ct, string updateSource)
+        private async Task ProcessFileInternal(AcquisitionConfig config, DateTime businessDate, string filePath, string taskLogId, IFileProvider provider, CancellationToken ct, string updateSource, AcquisitionTestExecutionOptions testOptions = null)
         {
             string actualFileName = Path.GetFileName(filePath);
             int startRow = 0;
@@ -323,13 +329,21 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 AcquisitionFileState fileState = await _fileStateService.GetAsync(config.Id, businessDate, actualFileName, ct).ConfigureAwait(false);
                 AcquisitionModeOptions acquisitionMode = ReadAcquisitionModeOptions(config);
                 bool shouldFullReload = ShouldFullReload(acquisitionMode, fileState, fileMetadata);
+                if (testOptions?.DisableFullReload == true)
+                {
+                    shouldFullReload = false;
+                }
 
-                if (!shouldFullReload && await _fileStateService.ShouldSkipForSealedAsync(config.Id, businessDate, actualFileName, updateSource, ct).ConfigureAwait(false))
+                if (testOptions?.BypassSealedSkip != true &&
+                    !shouldFullReload &&
+                    await _fileStateService.ShouldSkipForSealedAsync(config.Id, businessDate, actualFileName, updateSource, ct).ConfigureAwait(false))
                 {
                     return;
                 }
 
-                startRow = shouldFullReload
+                startRow = testOptions?.ForceConfiguredStartRow == true
+                    ? ResolveConfiguredStartRow(config)
+                    : shouldFullReload
                     ? ResolveConfiguredStartRow(config)
                     : await _logService.GetNextStartRowAsync(config.Id, businessDate, actualFileName, ct);
                 logEntry.StartRow = startRow;
@@ -396,6 +410,10 @@ namespace DT_DataAcquisitionSystem.Application.Services
                                 Rows = postProcessingRows
                             }, ct).ConfigureAwait(false);
                         }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
                         catch (Exception ex)
                         {
                             throw new Exception("Post processing failed: " + ex.Message, ex);
@@ -408,7 +426,14 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 logEntry.EndTime = DateTime.Now;
                 logEntry.Status = "Success";
                 await _logService.RecordLogEntryAsync(logEntry, ct);
-                await _fileStateService.UpsertSuccessAsync(config, businessDate, filePath, logEntry, updateSource, fileMetadata, shouldFullReload, ct).ConfigureAwait(false);
+                if (testOptions?.SkipFileStateUpdate != true)
+                {
+                    await _fileStateService.UpsertSuccessAsync(config, businessDate, filePath, logEntry, updateSource, fileMetadata, shouldFullReload, ct).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -463,6 +488,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             {
                 for (var date = start.Date; date <= end.Date; date = date.AddDays(1))
                 {
+                    ct.ThrowIfCancellationRequested();
                     var targetDate = date;
 
                     var task = Task.Run(async () =>
@@ -470,8 +496,13 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         await _concurrencySemaphore.WaitAsync(ct).ConfigureAwait(false);
                         try
                         {
+                            ct.ThrowIfCancellationRequested();
                             await ProcessSingleConfig(config, targetDate, taskLogId, ct, updateSource).ConfigureAwait(false);
                             Interlocked.Increment(ref summary.SuccessCount);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
                         }
                         catch (Exception ex)
                         {
@@ -486,15 +517,18 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         {
                             int processedCount = summary.SuccessCount + summary.FailureCount;
 
-                            await _logService.UpdateTaskProgressAsync(
-                                taskLogId,
-                                "Running",
-                                totalCount,
-                                summary.SuccessCount,
-                                summary.FailureCount,
-                                $"运行中：{processedCount}/{totalCount}",
-                                ct
-                            ).ConfigureAwait(false);
+                            if (!ct.IsCancellationRequested)
+                            {
+                                await _logService.UpdateTaskProgressAsync(
+                                    taskLogId,
+                                    "Running",
+                                    totalCount,
+                                    summary.SuccessCount,
+                                    summary.FailureCount,
+                                    $"运行中：{processedCount}/{totalCount}",
+                                    CancellationToken.None
+                                ).ConfigureAwait(false);
+                            }
 
                             _concurrencySemaphore.Release();
                         }
@@ -507,6 +541,10 @@ namespace DT_DataAcquisitionSystem.Application.Services
             try
             {
                 await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch
             {
@@ -648,6 +686,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private IFileProvider CreateProvider(AcquisitionConfig config, string path)
         {
             FileAccessOptions access = FileAccessOptions.FromParserOptions(config?.ParserOptions);
+            if (access.UseCurrentWindowsIdentity)
+            {
+                return _fileFactory.Create(path, null, null);
+            }
+
             string userName = access.HasUserName ? access.EffectiveUserName : null;
             string password = access.HasPassword ? access.GetPassword() : null;
             return _fileFactory.Create(path, userName, password);
