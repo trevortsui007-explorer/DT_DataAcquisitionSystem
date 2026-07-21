@@ -116,10 +116,18 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
                     credential.CredentialKey,
                     StringComparison.Ordinal))
             {
-                throw new InvalidOperationException(
-                    $"共享目录 {uncInfo.ShareRoot} 已使用账号 " +
-                    $"[{entry.UserName}] 初始化，不能再使用账号 " +
-                    $"[{credential.DisplayUserName}]。");
+                if (IsSameExplicitAccountAlias(entry.CredentialKey, credential))
+                {
+                    entry.UserName = credential.DisplayUserName;
+                    entry.CredentialKey = credential.CredentialKey;
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        $"共享目录 {uncInfo.ShareRoot} 已使用账号 " +
+                        $"[{entry.UserName}] 初始化，不能再使用账号 " +
+                        $"[{credential.DisplayUserName}]。");
+                }
             }
 
             EnsureConnected(entry, userName, password);
@@ -345,53 +353,31 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
                     Provider = null
                 };
 
-                int result = WNetAddConnection2(
+                int result = TryAddConnection(
                     ref resource,
                     password,
                     userName,
-                    0);
+                    entry);
 
                 if (result == NoError)
                 {
-                    entry.IsConnected = true;
-                    entry.ConnectedTime = DateTime.Now;
                     return;
                 }
 
                 if (result == ErrorSessionCredentialConflict &&
-                    !string.IsNullOrWhiteSpace(userName) &&
-                    entry.ActiveLeaseCount == 0)
+                    !string.IsNullOrWhiteSpace(userName))
                 {
-                    int disconnectResult = WNetCancelConnection2(
-                        entry.ShareRoot,
-                        0,
-                        false);
+                    List<string> recoveryMessages = ForceDisconnectForCredentialConflict(entry);
 
-                    if (disconnectResult == NoError ||
-                        disconnectResult == ErrorNotConnected)
+                    result = TryAddConnection(
+                        ref resource,
+                        password,
+                        userName,
+                        entry);
+
+                    if (result == NoError)
                     {
-                        entry.IsConnected = false;
-
-                        result = WNetAddConnection2(
-                            ref resource,
-                            password,
-                            userName,
-                            0);
-
-                        if (result == NoError)
-                        {
-                            entry.IsConnected = true;
-                            entry.ConnectedTime = DateTime.Now;
-                            return;
-                        }
-
-                        throw new Win32Exception(
-                            result,
-                            BuildErrorMessage(
-                                entry.ShareRoot,
-                                userName,
-                                result) +
-                            $" 同共享自动断开后重试失败，Win32Error={result}。");
+                        return;
                     }
 
                     throw new Win32Exception(
@@ -400,7 +386,8 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
                             entry.ShareRoot,
                             userName,
                             result) +
-                        $" 同共享自动断开失败，Win32Error={disconnectResult}，Reason={new Win32Exception(disconnectResult).Message}。");
+                        " 已尝试强制断开同服务器 SMB 连接后重试，仍然失败。" +
+                        string.Join(" ", recoveryMessages));
                 }
 
                 throw new Win32Exception(
@@ -412,30 +399,120 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
             }
         }
 
-        private static void RegisterServerCredential(
-            string serverName,
-            CredentialDescriptor credential)
+        private static int TryAddConnection(
+            ref NetResource resource,
+            string password,
+            string userName,
+            ConnectionEntry entry)
         {
-            CredentialDescriptor existing =
-                ServerCredentials.GetOrAdd(serverName, credential);
+            int result = WNetAddConnection2(
+                ref resource,
+                password,
+                userName,
+                0);
 
-            if (string.Equals(
-                    existing.CredentialKey,
-                    credential.CredentialKey,
-                    StringComparison.Ordinal))
+            if (result == NoError)
+            {
+                entry.IsConnected = true;
+                entry.ConnectedTime = DateTime.Now;
+            }
+
+            return result;
+        }
+
+        private static List<string> ForceDisconnectForCredentialConflict(
+            ConnectionEntry currentEntry)
+        {
+            var messages = new List<string>();
+            ForceDisconnectRemote(currentEntry.ShareRoot, messages);
+
+            string serverRoot = @"\\" + currentEntry.ServerName;
+            ForceDisconnectRemote(serverRoot + @"\IPC$", messages);
+            ForceDisconnectRemote(serverRoot, messages);
+
+            foreach (ConnectionEntry entry in ShareConnections.Values
+                         .Where(x => string.Equals(
+                             x.ServerName,
+                             currentEntry.ServerName,
+                             StringComparison.OrdinalIgnoreCase))
+                         .ToList())
+            {
+                if (ReferenceEquals(entry, currentEntry))
+                {
+                    entry.IsConnected = false;
+                    continue;
+                }
+
+                lock (entry.SyncRoot)
+                {
+                    ForceDisconnectRemote(entry.ShareRoot, messages);
+                    entry.IsConnected = false;
+                }
+            }
+
+            return messages;
+        }
+
+        private static void ForceDisconnectRemote(
+            string remoteName,
+            List<string> messages)
+        {
+            if (string.IsNullOrWhiteSpace(remoteName))
             {
                 return;
             }
 
-            throw new InvalidOperationException(
-                $"SMB 凭据配置冲突：服务器 \\\\{serverName} " +
-                $"已经登记账号 [{existing.DisplayUserName}]，" +
-                $"当前又尝试使用账号 [{credential.DisplayUserName}]。" +
-                Environment.NewLine +
-                "Windows 不允许同一个运行用户同时使用不同账号连接同一服务器。" +
-                Environment.NewLine +
-                $"请检查所有以 \\\\{serverName}\\ 开头的文件配置，" +
-                "确保它们全部使用相同账号；也不能混用“未配置账号”和显式账号。");
+            int result = WNetCancelConnection2(remoteName, 0, true);
+            if (result == NoError || result == ErrorNotConnected)
+            {
+                messages.Add($"已强制断开 {remoteName}，Win32Error={result}。");
+                return;
+            }
+
+            messages.Add(
+                $"强制断开 {remoteName} 失败，" +
+                $"Win32Error={result}，Reason={new Win32Exception(result).Message}。");
+        }
+
+        private static void RegisterServerCredential(
+            string serverName,
+            CredentialDescriptor credential)
+        {
+            while (true)
+            {
+                CredentialDescriptor existing =
+                    ServerCredentials.GetOrAdd(serverName, credential);
+
+                if (string.Equals(
+                        existing.CredentialKey,
+                        credential.CredentialKey,
+                        StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                if (IsSameExplicitAccountAlias(existing.CredentialKey, credential))
+                {
+                    if (ServerCredentials.TryUpdate(serverName, credential, existing))
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
+                throw new InvalidOperationException(
+                    $"SMB 凭据配置冲突：服务器 \\\\{serverName} " +
+                    $"已经登记账号 [{existing.DisplayUserName}]，" +
+                    $"当前又尝试使用账号 [{credential.DisplayUserName}]。" +
+                    Environment.NewLine +
+                    "Windows 不允许同一个运行用户同时使用不同账号连接同一服务器。" +
+                    Environment.NewLine +
+                    $"请检查所有以 \\\\{serverName}\\ 开头的文件配置，" +
+                    "确保它们全部使用相同账号；也不能混用“未配置账号”和显式账号。" +
+                    Environment.NewLine +
+                    $"如果刚从裸账号 [{GetUserNameFromCredentialKey(existing.CredentialKey)}] 更新为域账号 [{credential.DisplayUserName}]，请调用 /api/data-acquisition/smb-connections/disconnect-server 或重启 WebApi 应用池。");
+            }
         }
 
         private static CredentialDescriptor CreateCredentialDescriptor(
@@ -479,6 +556,94 @@ namespace DT_DataAcquisitionSystem.Common.Utilities
                     "|" +
                     passwordHash
             };
+        }
+
+        private static bool IsSameExplicitAccountAlias(
+            string existingCredentialKey,
+            CredentialDescriptor credential)
+        {
+            if (credential == null || !credential.IsExplicit)
+            {
+                return false;
+            }
+
+            if (!TryReadExplicitCredentialKey(
+                    existingCredentialKey,
+                    out string existingUserName,
+                    out string existingPasswordHash))
+            {
+                return false;
+            }
+
+            if (!TryReadExplicitCredentialKey(
+                    credential.CredentialKey,
+                    out string currentUserName,
+                    out string currentPasswordHash))
+            {
+                return false;
+            }
+
+            return string.Equals(existingPasswordHash, currentPasswordHash, StringComparison.Ordinal) &&
+                   string.Equals(
+                       GetAccountLeaf(existingUserName),
+                       GetAccountLeaf(currentUserName),
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryReadExplicitCredentialKey(
+            string credentialKey,
+            out string userName,
+            out string passwordHash)
+        {
+            userName = string.Empty;
+            passwordHash = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(credentialKey) ||
+                !credentialKey.StartsWith("EXPLICIT|", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            string[] parts = credentialKey.Split(new[] { '|' }, 3);
+            if (parts.Length != 3)
+            {
+                return false;
+            }
+
+            userName = parts[1];
+            passwordHash = parts[2];
+            return !string.IsNullOrWhiteSpace(userName) &&
+                   !string.IsNullOrWhiteSpace(passwordHash);
+        }
+
+        private static string GetAccountLeaf(string userName)
+        {
+            if (string.IsNullOrWhiteSpace(userName))
+            {
+                return string.Empty;
+            }
+
+            string normalized = userName.Trim();
+            int slashIndex = normalized.LastIndexOf('\\');
+            if (slashIndex >= 0 && slashIndex < normalized.Length - 1)
+            {
+                normalized = normalized.Substring(slashIndex + 1);
+            }
+
+            int atIndex = normalized.IndexOf('@');
+            if (atIndex > 0)
+            {
+                normalized = normalized.Substring(0, atIndex);
+            }
+
+            return normalized.Trim().ToUpperInvariant();
+        }
+
+        private static string GetUserNameFromCredentialKey(string credentialKey)
+        {
+            return TryReadExplicitCredentialKey(credentialKey, out string userName, out _)
+                ? userName
+                : string.Empty;
         }
 
         private static string ComputeHash(string value)
