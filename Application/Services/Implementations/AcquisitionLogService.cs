@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -228,20 +228,20 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return await _logRepo.GetLogsByTaskLogIdAsync(taskLogId, ct).ConfigureAwait(false);
         }
 
-        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, CancellationToken ct = default)
+        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
                 throw new ArgumentNullException(nameof(taskLogId));
 
-            return await _logRepo.GetLogsByTaskLogIdAsync(taskLogId, pageNo, pageSize, status, errorCategory, ct).ConfigureAwait(false);
+            return await _logRepo.GetLogsByTaskLogIdAsync(taskLogId, pageNo, pageSize, status, errorCategory, hasProcessedRows, ct).ConfigureAwait(false);
         }
 
-        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, CancellationToken ct = default)
+        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
                 throw new ArgumentNullException(nameof(taskLogId));
 
-            return await _logRepo.GetLogsCountByTaskLogIdAsync(taskLogId, status, errorCategory, ct).ConfigureAwait(false);
+            return await _logRepo.GetLogsCountByTaskLogIdAsync(taskLogId, status, errorCategory, hasProcessedRows, ct).ConfigureAwait(false);
         }
 
         public async Task<int> GetLogsProcessedRowsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default)

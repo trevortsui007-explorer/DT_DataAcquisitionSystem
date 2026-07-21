@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,7 +22,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
         Task<TaskStatusDto> GetTaskStatusAsync(string taskLogId, CancellationToken ct = default);
         Task<List<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, CancellationToken ct = default);
-        Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, CancellationToken ct = default);
+        Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default);
         Task<TaskDetailSummaryDto> GetTaskDetailSummaryAsync(string taskLogId, CancellationToken ct = default);
 
         /// <summary> 分页获取采集任务日志列表（支持状态、时间范围及任务 ID 筛选） </summary>

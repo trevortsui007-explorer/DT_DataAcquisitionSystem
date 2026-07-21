@@ -284,7 +284,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             }
         }
 
-        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, CancellationToken ct = default)
+        public async Task<List<AcquisitionLogEntry>> GetLogsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
         {
             const string sql = @"
                 WITH FilteredLogs AS
@@ -331,11 +331,12 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 WHERE 1 = 1
                   AND (
                     @Status IS NULL
-                    OR (@Status = 'Warning' AND ISNULL([ErrorMessage], '') LIKE @MissingFilePattern)
-                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorMessage], '') NOT LIKE @MissingFilePattern)
+                    OR (@Status = 'Warning' AND [ErrorCategory] = 'FileMissing')
+                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') <> 'FileMissing')
                     OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
                   )
                   AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
+                  AND (@HasProcessedRows = 0 OR ISNULL([ProcessedRows], 0) > 0)
                 ORDER BY [StartTime] DESC, [Id] DESC
                 OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
 
@@ -355,6 +356,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                             TaskLogId = taskLogId,
                             Status = NormalizeDetailStatus(status),
                             ErrorCategory = NormalizeErrorCategory(errorCategory),
+                            HasProcessedRows = hasProcessedRows,
                             MissingFilePattern = "%\u6587\u4ef6\u672a\u627e\u5230%",
                             Offset = offset,
                             PageSize = safePageSize
@@ -366,7 +368,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             }
         }
 
-        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, CancellationToken ct = default)
+        public async Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
         {
             const string sql = @"
                 WITH FilteredLogs AS
@@ -374,6 +376,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     SELECT
                         [Status],
                         [ErrorMessage],
+                        [ProcessedRows],
                         CASE
                             WHEN [Status] = 'Success' THEN NULL
                             WHEN ISNULL([ErrorMessage], '') LIKE '%Post processing failed%' THEN 'PostProcessing'
@@ -393,11 +396,12 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 WHERE 1 = 1
                   AND (
                     @Status IS NULL
-                    OR (@Status = 'Warning' AND ISNULL([ErrorMessage], '') LIKE @MissingFilePattern)
-                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorMessage], '') NOT LIKE @MissingFilePattern)
+                    OR (@Status = 'Warning' AND [ErrorCategory] = 'FileMissing')
+                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') <> 'FileMissing')
                     OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
                   )
-                  AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory);";
+                  AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
+                  AND (@HasProcessedRows = 0 OR ISNULL([ProcessedRows], 0) > 0);";
 
             using (var conn = new SqlConnection(_connectionString))
             {
@@ -411,6 +415,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                             TaskLogId = taskLogId,
                             Status = NormalizeDetailStatus(status),
                             ErrorCategory = NormalizeErrorCategory(errorCategory),
+                            HasProcessedRows = hasProcessedRows,
                             MissingFilePattern = "%\u6587\u4ef6\u672a\u627e\u5230%"
                         },
                         cancellationToken: ct
@@ -528,7 +533,12 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 FROM [dbo].[DA_AcquisitionLog]
                 WHERE CAST([TaskLogId] AS NVARCHAR(50)) IN @TaskLogIds
                   AND [Status] = 'Failed'
-                  AND ISNULL([ErrorMessage], '') LIKE N'%文件未找到%'
+                  AND (
+                    ISNULL([ErrorMessage], '') LIKE @FileMissingPattern1
+                    OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern2
+                    OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern3
+                    OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern4
+                  )
                 GROUP BY CAST([TaskLogId] AS NVARCHAR(50));";
 
             using (var conn = new SqlConnection(_connectionString))
@@ -536,7 +546,14 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 var rows = await conn.QueryAsync<(string TaskLogId, int WarningCount)>(
                     new CommandDefinition(
                         sql,
-                        new { TaskLogIds = ids },
+                        new
+                        {
+                            TaskLogIds = ids,
+                            FileMissingPattern1 = "%\u6587\u4ef6\u672a\u627e\u5230%",
+                            FileMissingPattern2 = "%\u4e0d\u5b58\u5728%",
+                            FileMissingPattern3 = "%\u672a\u627e\u5230\u53ef\u5904\u7406\u6587\u4ef6%",
+                            FileMissingPattern4 = "%File not found%"
+                        },
                         cancellationToken: ct
                     )).ConfigureAwait(false);
 

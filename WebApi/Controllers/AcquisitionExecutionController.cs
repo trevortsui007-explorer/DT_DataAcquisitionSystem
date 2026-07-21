@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Configuration;
 using System.Linq;
 using System.Threading;
@@ -464,6 +464,14 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
             }
         }
 
+        private static bool IsTruthy(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            return value == "1" ||
+                   value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("yes", StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>
         /// GET /{taskLogId}/details
         /// </summary>
@@ -485,11 +493,13 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                 string pageSizeParam = this.GetParam("pageSize");
                 string status = this.GetParam("status");
                 string errorCategory = this.GetParam("errorCategory");
+                bool hasProcessedRows = IsTruthy(this.GetParam("hasProcessedRows"));
                 bool usePaging =
                     !string.IsNullOrWhiteSpace(pageNoParam) ||
                     !string.IsNullOrWhiteSpace(pageSizeParam) ||
                     !string.IsNullOrWhiteSpace(status) ||
-                    !string.IsNullOrWhiteSpace(errorCategory);
+                    !string.IsNullOrWhiteSpace(errorCategory) ||
+                    hasProcessedRows;
 
                 object result;
 
@@ -503,7 +513,7 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                     if (pageSize > 200) pageSize = 200;
 
                     result = await _executionService
-                        .GetTaskDetailsAsync(taskLogId, pageNo, pageSize, status, errorCategory, ct)
+                        .GetTaskDetailsAsync(taskLogId, pageNo, pageSize, status, errorCategory, hasProcessedRows, ct)
                         .ConfigureAwait(false);
                 }
                 else
