@@ -29,6 +29,11 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
         Task ReplaceFileDataAsync(DataTable dataTable, string destinationTableName, string fullPath, string fileName, System.DateTime businessDate, CancellationToken ct = default);
 
         /// <summary>
+        /// 删除本次已经插入的行，用于后处理失败后的回滚清理。
+        /// </summary>
+        Task<int> DeleteInsertedRowsAsync(DataTable dataTable, string destinationTableName, string fullPath, string fileName, System.DateTime businessDate, CancellationToken ct = default);
+
+        /// <summary>
         /// 执行存储过程
         /// </summary>
         Task ExecuteStoredProcedureAsync(string flag, string sprocName, CancellationToken ct = default);

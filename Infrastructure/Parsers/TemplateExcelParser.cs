@@ -52,6 +52,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure
                 var rows = new List<Dictionary<string, object>>();
                 var carryValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
                 int emptyRows = 0;
+                int candidateRows = 0;
                 int startRow = definition.DataRegion.StartRow <= 0 ? config.StartRow : definition.DataRegion.StartRow;
                 int effectiveMinSourceRow = IsAutoLineNoMetadataDefinition(definition)
                     ? startRow
@@ -120,10 +121,16 @@ namespace DT_DataAcquisitionSystem.Infrastructure
 
                     ApplyTemplateSystemFields(row, definition, config, rowNumber, fullFilePath, rawValues);
 
+                    candidateRows++;
                     if (rowNumber >= effectiveMinSourceRow)
                     {
                         rows.Add(row);
                     }
+                }
+
+                if (candidateRows == 0)
+                {
+                    throw new InvalidOperationException("Template structure mismatch. No valid detail rows were found; title may be missing but the data region could not be parsed.");
                 }
 
                 return rows;
@@ -362,9 +369,9 @@ namespace DT_DataAcquisitionSystem.Infrastructure
             }
 
             string title = Convert.ToString(GetCellValue(sheet, definition.Identity.TitleCell)) ?? string.Empty;
-            if (!title.Contains(definition.Identity.TitleContains))
+            if (string.IsNullOrWhiteSpace(title) || !title.Contains(definition.Identity.TitleContains))
             {
-                throw new InvalidOperationException($"Template title mismatch. Expected text: {definition.Identity.TitleContains}");
+                return;
             }
         }
 

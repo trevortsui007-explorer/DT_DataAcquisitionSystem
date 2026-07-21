@@ -4,6 +4,7 @@ using System.Configuration;
 using System.Data;
 using System.Data.SqlClient;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using DT_DataAcquisitionSystem.Domain.Entities;
@@ -264,6 +265,113 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Persistence
             }
         }
 
+        public async Task<int> DeleteInsertedRowsAsync(DataTable dataTable, string destinationTableName, string fullPath, string fileName, DateTime businessDate, CancellationToken ct = default)
+        {
+            if (dataTable == null || dataTable.Rows.Count == 0) return 0;
+
+            DataColumn idColumn = FindColumn(dataTable, "Id");
+            var ids = new List<string>();
+            if (idColumn != null)
+            {
+                foreach (DataRow row in dataTable.Rows)
+                {
+                    if (row.IsNull(idColumn)) continue;
+                    string id = Convert.ToString(row[idColumn])?.Trim();
+                    if (!string.IsNullOrWhiteSpace(id)) ids.Add(id);
+                }
+            }
+
+            if (ids.Count > 0)
+            {
+                return await DeleteRowsByIdsAsync(destinationTableName, ids.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), ct)
+                    .ConfigureAwait(false);
+            }
+
+            DataColumn fullPathColumn = FindColumn(dataTable, "FullFilePath");
+            DataColumn sourceRowColumn = FindColumn(dataTable, "SourceRow");
+            if (sourceRowColumn == null)
+            {
+                sourceRowColumn = FindColumn(dataTable, "row");
+            }
+
+            if (fullPathColumn == null || sourceRowColumn == null)
+            {
+                throw new InvalidOperationException($"后处理失败回滚需要目标表 {destinationTableName} 包含 Id，或同时包含 FullFilePath 与 SourceRow。");
+            }
+
+            var sourceRows = new HashSet<int>();
+            foreach (DataRow row in dataTable.Rows)
+            {
+                if (row.IsNull(sourceRowColumn)) continue;
+                int sourceRow;
+                if (int.TryParse(Convert.ToString(row[sourceRowColumn]), out sourceRow) && sourceRow > 0)
+                {
+                    sourceRows.Add(sourceRow);
+                }
+            }
+
+            if (sourceRows.Count == 0)
+            {
+                return 0;
+            }
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandTimeout = 600;
+                    cmd.CommandText = BuildDeleteRowsByPathAndSourceRowsSql(destinationTableName, fullPathColumn.ColumnName, sourceRowColumn.ColumnName, sourceRows.Count);
+                    cmd.Parameters.Add("@FullFilePath", SqlDbType.NVarChar, 2000).Value = string.IsNullOrWhiteSpace(fullPath) ? DBNull.Value : (object)fullPath;
+
+                    int index = 0;
+                    foreach (int sourceRow in sourceRows)
+                    {
+                        cmd.Parameters.Add("@Row" + index, SqlDbType.Int).Value = sourceRow;
+                        index++;
+                    }
+
+                    return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+            }
+        }
+
+        private async Task<int> DeleteRowsByIdsAsync(string destinationTableName, List<string> ids, CancellationToken ct)
+        {
+            int deleted = 0;
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                for (int offset = 0; offset < ids.Count; offset += 500)
+                {
+                    List<string> batch = ids.Skip(offset).Take(500).ToList();
+                    using (var cmd = conn.CreateCommand())
+                    {
+                        cmd.CommandTimeout = 600;
+                        var parameterNames = new List<string>();
+                        for (int i = 0; i < batch.Count; i++)
+                        {
+                            string parameterName = "@Id" + i;
+                            parameterNames.Add(parameterName);
+                            cmd.Parameters.Add(parameterName, SqlDbType.NVarChar, 100).Value = batch[i];
+                        }
+
+                        cmd.CommandText = $"DELETE FROM [{destinationTableName}] WHERE CONVERT(NVARCHAR(100), [Id]) IN ({string.Join(",", parameterNames)})";
+                        deleted += await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            return deleted;
+        }
+
+        private static string BuildDeleteRowsByPathAndSourceRowsSql(string destinationTableName, string fullPathColumnName, string sourceRowColumnName, int sourceRowCount)
+        {
+            var parameterNames = Enumerable.Range(0, sourceRowCount).Select(i => "@Row" + i);
+            return $"DELETE FROM [{destinationTableName}] WHERE [{fullPathColumnName}] = @FullFilePath AND [{sourceRowColumnName}] IN ({string.Join(",", parameterNames)})";
+        }
+
         private static void AddColumnMappings(SqlBulkCopy bulkCopy, DataTable dataTable)
         {
             foreach (DataColumn column in dataTable.Columns)
@@ -310,27 +418,115 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Persistence
 
             return null;
         }
-
         /// <summary>
         /// 执行存储过程触发后处理逻辑。
         /// </summary>
         public async Task ExecuteStoredProcedureAsync(string flag, string sprocName, CancellationToken ct = default)
         {
-            using (var conn = new SqlConnection(_connectionString))
+            const int maxDeadlockRetries = 3;
+            for (int attempt = 0; ; attempt++)
             {
-                await conn.OpenAsync(ct);
-                using (var cmd = new SqlCommand(sprocName, conn))
+                try
                 {
-                    cmd.CommandType = CommandType.StoredProcedure;
-                    cmd.CommandTimeout = 600;
-
-                    if (!string.IsNullOrEmpty(flag))
-                    {
-                        cmd.Parameters.AddWithValue("@Flag", flag);
-                    }
-                    await cmd.ExecuteNonQueryAsync(ct);
+                    await ExecuteStoredProcedureOnceAsync(flag, sprocName, ct).ConfigureAwait(false);
+                    return;
+                }
+                catch (SqlException ex) when (IsDeadlock(ex) && attempt < maxDeadlockRetries)
+                {
+                    int delayMs = 500 * (attempt + 1) * (attempt + 1);
+                    await Task.Delay(delayMs, ct).ConfigureAwait(false);
+                }
+                catch (SqlException ex) when (IsDeadlock(ex))
+                {
+                    throw new Exception($"存储过程后处理发生死锁，已重试 {maxDeadlockRetries} 次仍失败: {ex.Message}", ex);
                 }
             }
+        }
+
+        private async Task ExecuteStoredProcedureOnceAsync(string flag, string sprocName, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(sprocName)) throw new ArgumentNullException(nameof(sprocName));
+
+            string lockResource = BuildPostProcessingLockResource(flag, sprocName);
+            bool lockAcquired = false;
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    await AcquirePostProcessingLockAsync(conn, lockResource, ct).ConfigureAwait(false);
+                    lockAcquired = true;
+
+                    using (var cmd = new SqlCommand(sprocName, conn))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        cmd.CommandTimeout = 600;
+
+                        if (!string.IsNullOrEmpty(flag))
+                        {
+                            cmd.Parameters.AddWithValue("@Flag", flag);
+                        }
+
+                        await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    if (lockAcquired)
+                    {
+                        await ReleasePostProcessingLockAsync(conn, lockResource).ConfigureAwait(false);
+                    }
+                }
+            }
+        }
+
+        private static async Task AcquirePostProcessingLockAsync(SqlConnection conn, string lockResource, CancellationToken ct)
+        {
+            using (var cmd = new SqlCommand("sp_getapplock", conn))
+            {
+                cmd.CommandType = CommandType.StoredProcedure;
+                cmd.CommandTimeout = 600;
+                cmd.Parameters.AddWithValue("@Resource", lockResource);
+                cmd.Parameters.AddWithValue("@LockMode", "Exclusive");
+                cmd.Parameters.AddWithValue("@LockOwner", "Session");
+                cmd.Parameters.AddWithValue("@LockTimeout", 600000);
+
+                var returnValue = cmd.Parameters.Add("@ReturnValue", SqlDbType.Int);
+                returnValue.Direction = ParameterDirection.ReturnValue;
+
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                int lockResult = returnValue.Value == null ? -999 : Convert.ToInt32(returnValue.Value);
+                if (lockResult < 0)
+                {
+                    throw new TimeoutException($"获取后处理执行锁失败，LockResult={lockResult}，Resource={lockResource}");
+                }
+            }
+        }
+
+        private static async Task ReleasePostProcessingLockAsync(SqlConnection conn, string lockResource)
+        {
+            if (conn == null || conn.State != ConnectionState.Open) return;
+
+            using (var cmd = new SqlCommand("sp_releaseapplock", conn))
+            {
+                cmd.CommandType = CommandType.StoredProcedure;
+                cmd.CommandTimeout = 60;
+                cmd.Parameters.AddWithValue("@Resource", lockResource);
+                cmd.Parameters.AddWithValue("@LockOwner", "Session");
+                await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+            }
+        }
+
+        private static bool IsDeadlock(SqlException ex)
+        {
+            return ex != null && ex.Errors.Cast<SqlError>().Any(error => error.Number == 1205);
+        }
+
+        private static string BuildPostProcessingLockResource(string flag, string sprocName)
+        {
+            string resource = $"DA_PostProcess:{sprocName}:{flag}";
+            return resource.Length <= 255 ? resource : resource.Substring(0, 255);
         }
 
         /// <summary>
