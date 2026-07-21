@@ -41,6 +41,6 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
 
         // 执行器外部已创建 taskLogId，由这里负责真正批量执行并实时更新进度
-        Task<AcquisitionSummary> ExecuteBatchWithTaskLogAsync(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default, string updateSource = null, bool sealOnSuccess = false);
+        Task<AcquisitionSummary> ExecuteBatchWithTaskLogAsync(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default, string updateSource = null, bool sealOnSuccess = false, PostProcessingTiming postProcessingTiming = PostProcessingTiming.PerFile);
     }
 }

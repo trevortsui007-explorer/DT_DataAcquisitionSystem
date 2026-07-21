@@ -15,6 +15,8 @@ namespace DT_DataAcquisitionSystem.Application.DTOs
 
         public int IsEnabled { get; set; }
 
+        public int PostProcessingTiming { get; set; }
+
         public string Description { get; set; }
 
         public DateTime? CreateTime { get; set; }

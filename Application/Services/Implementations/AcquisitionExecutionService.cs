@@ -1,10 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using DT_DataAcquisitionSystem.Application.DTOs;
+using DT_DataAcquisitionSystem.Common.Utilities;
 using DT_DataAcquisitionSystem.Domain.Entities;
 
 namespace DT_DataAcquisitionSystem.Application.Services
@@ -15,6 +16,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private readonly IAcquisitionLogService _acquisitionLogService;
         private readonly IFileConfigService _fileConfigService;
         private readonly ILogCodeGenerator _logCodeGenerator;
+        private readonly DT_DataAcquisitionSystem.Domain.Interfaces.IAcquisitionTaskService _taskService;
         private static readonly ConcurrentDictionary<string, CancellationTokenSource> RunningTasks =
             new ConcurrentDictionary<string, CancellationTokenSource>(StringComparer.OrdinalIgnoreCase);
 
@@ -28,6 +30,14 @@ namespace DT_DataAcquisitionSystem.Application.Services
             _acquisitionLogService = acquisitionLogService ?? throw new ArgumentNullException(nameof(acquisitionLogService));
             _fileConfigService = fileConfigService ?? throw new ArgumentNullException(nameof(fileConfigService));
             _logCodeGenerator = logCodeGenerator ?? throw new ArgumentNullException(nameof(logCodeGenerator));
+            try
+            {
+                _taskService = TaskIocHelper.GetTaskService();
+            }
+            catch
+            {
+                _taskService = null;
+            }
         }
 
         public async Task<TaskStartResponseDto> StartByIdsAsync(string[] ids, DateTime processDate, CancellationToken ct = default)
@@ -45,12 +55,14 @@ namespace DT_DataAcquisitionSystem.Application.Services
         public async Task<TaskStartResponseDto> StartByTasksAsync(string[] taskIds, DateTime processDate, CancellationToken ct = default)
         {
             var configs = await GetConfigsByTaskIdsAsync(taskIds, ct).ConfigureAwait(false);
-            return await StartBatchAsync(configs, processDate.Date, processDate.Date, TaskTriggerTypes.Manual, "计划任务采集已启动。", ct).ConfigureAwait(false);
+            var postProcessingTiming = ResolvePostProcessingTiming(taskIds);
+            return await StartBatchAsync(configs, processDate.Date, processDate.Date, TaskTriggerTypes.Manual, "计划任务采集已启动。", ct, postProcessingTiming).ConfigureAwait(false);
         }
         public async Task<TaskStartResponseDto> StartScheduledByTasksAsync(string[] taskIds, DateTime processDate, CancellationToken ct = default)
         {
             var configs = await GetConfigsByTaskIdsAsync(taskIds, ct).ConfigureAwait(false);
-            return await StartBatchAsync(configs, processDate.Date, processDate.Date, TaskTriggerTypes.Scheduled, "计划任务采集已启动。", ct).ConfigureAwait(false);
+            var postProcessingTiming = ResolvePostProcessingTiming(taskIds);
+            return await StartBatchAsync(configs, processDate.Date, processDate.Date, TaskTriggerTypes.Scheduled, "计划任务采集已启动。", ct, postProcessingTiming).ConfigureAwait(false);
         }
 
         public async Task<TaskStartResponseDto> StartByRangeAsync(AcquisitionConfig config, DateTime startDate, DateTime endDate, CancellationToken ct = default)
@@ -111,7 +123,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 .ToList();
         }
 
-        public async Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, CancellationToken ct = default)
+        public async Task<PagedResultDto<TaskDetailLogDto>> GetTaskDetailsAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
                 throw new ArgumentNullException(nameof(taskLogId));
@@ -130,6 +142,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 var filteredLogs = (allLogs ?? new List<AcquisitionLogEntry>())
                     .Where(x => IsDetailStatusMatch(x, status))
                     .Where(x => string.Equals(GetErrorCategory(x.Status, x.ErrorMessage), errorCategory, StringComparison.OrdinalIgnoreCase))
+                    .Where(x => !hasProcessedRows || x.ProcessedRows > 0)
                     .OrderByDescending(x => x.StartTime)
                     .ThenByDescending(x => x.Id)
                     .ToList();
@@ -155,12 +168,14 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 safePageSize,
                 status,
                 null,
+                hasProcessedRows,
                 ct).ConfigureAwait(false);
 
             var total = await _acquisitionLogService.GetLogsCountByTaskLogIdAsync(
                 taskLogId,
                 status,
                 null,
+                hasProcessedRows,
                 ct).ConfigureAwait(false);
 
             var items = (logs ?? new List<AcquisitionLogEntry>())
@@ -181,10 +196,10 @@ namespace DT_DataAcquisitionSystem.Application.Services
             if (string.IsNullOrWhiteSpace(taskLogId))
                 throw new ArgumentNullException(nameof(taskLogId));
 
-            var totalTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, null, null, ct);
-            var successTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, "Success", null, ct);
-            var warningTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, "Warning", null, ct);
-            var failedTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, "Failed", null, ct);
+            var totalTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, null, null, false, ct);
+            var successTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, "Success", null, false, ct);
+            var warningTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, "Warning", null, false, ct);
+            var failedTask = _acquisitionLogService.GetLogsCountByTaskLogIdAsync(taskLogId, "Failed", null, false, ct);
             var processedRowsTask = _acquisitionLogService.GetLogsProcessedRowsByTaskLogIdAsync(taskLogId, ct);
             var logsTask = _acquisitionLogService.GetLogsByTaskLogIdAsync(taskLogId, ct);
 
@@ -269,13 +284,13 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
             if (status.Equals("Warning", StringComparison.OrdinalIgnoreCase))
             {
-                return ContainsAny(entry.ErrorMessage ?? string.Empty, "\u6587\u4ef6\u672a\u627e\u5230");
+                return string.Equals(GetErrorCategory(entry.Status, entry.ErrorMessage), "FileMissing", StringComparison.OrdinalIgnoreCase);
             }
 
             if (status.Equals("Failed", StringComparison.OrdinalIgnoreCase))
             {
                 return string.Equals(entry.Status, "Failed", StringComparison.OrdinalIgnoreCase)
-                    && !ContainsAny(entry.ErrorMessage ?? string.Empty, "\u6587\u4ef6\u672a\u627e\u5230");
+                    && !string.Equals(GetErrorCategory(entry.Status, entry.ErrorMessage), "FileMissing", StringComparison.OrdinalIgnoreCase);
             }
 
             return string.Equals(entry.Status, status, StringComparison.OrdinalIgnoreCase);
@@ -443,7 +458,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
             DateTime endDate,
             string triggerType,
             string successMessage,
-            CancellationToken ct)
+            CancellationToken ct,
+            PostProcessingTiming postProcessingTiming = PostProcessingTiming.PerFile)
         {
             configs = configs ?? new List<AcquisitionConfig>();
 
@@ -457,7 +473,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 };
             }
 
-            int totalCount = configs.Count * ((endDate.Date - startDate.Date).Days + 1);
+            int totalCount = CalculateWorkItemCount(configs, startDate, endDate);
 
             var taskLogEntry = await CreateRunningTaskLogAsync(
                 totalCount,
@@ -482,7 +498,8 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         taskLogId,
                         executionCts.Token,
                         updateSource,
-                        sealOnSuccess
+                        sealOnSuccess,
+                        postProcessingTiming
                     ).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
@@ -528,6 +545,25 @@ namespace DT_DataAcquisitionSystem.Application.Services
             };
         }
 
+        private PostProcessingTiming ResolvePostProcessingTiming(string[] taskIds)
+        {
+            if (taskIds == null || taskIds.Length == 0 || _taskService == null)
+            {
+                return PostProcessingTiming.PerFile;
+            }
+
+            try
+            {
+                var tasks = _taskService.GetByIds(taskIds)?.ToList() ?? new List<AcquisitionTask>();
+                return tasks.Any(x => x.PostProcessingTiming == (int)PostProcessingTiming.AfterTask)
+                    ? PostProcessingTiming.AfterTask
+                    : PostProcessingTiming.PerFile;
+            }
+            catch
+            {
+                return PostProcessingTiming.PerFile;
+            }
+        }
         private static string ResolveUpdateSource(string triggerType, DateTime startDate, DateTime endDate)
         {
             bool isHistory = endDate.Date < DateTime.Today;
@@ -542,6 +578,41 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return isHistory
                 ? FileStateUpdateSources.ManualRepair
                 : FileStateUpdateSources.ManualCurrent;
+        }
+
+        private static int CalculateWorkItemCount(IEnumerable<AcquisitionConfig> configs, DateTime startDate, DateTime endDate)
+        {
+            int count = 0;
+            var folderKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var config in configs ?? Enumerable.Empty<AcquisitionConfig>())
+            {
+                for (var date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
+                {
+                    string fileName = FileDateTimeUtil.GetProcessedFileName(config, date);
+                    bool folderMode = string.IsNullOrWhiteSpace(fileName);
+                    if (!folderMode)
+                    {
+                        count++;
+                        continue;
+                    }
+
+                    string path = FileDateTimeUtil.GetProcessedFilePath(config, date);
+                    string key = $"{config?.Id ?? 0}|folder|{NormalizePathKey(path)}";
+                    if (folderKeys.Add(key))
+                    {
+                        count++;
+                    }
+                }
+            }
+
+            return count;
+        }
+
+        private static string NormalizePathKey(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+            return path.Trim().TrimEnd('\\', '/').Replace('/', '\\');
         }
 
         private async Task<AcquisitionTaskLogEntry> CreateRunningTaskLogAsync(int totalCount, string triggerType, string message, CancellationToken ct)

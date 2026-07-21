@@ -76,13 +76,18 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             groupConfigLinkTable = string.IsNullOrEmpty(groupConfigLinkTable) ? DefaultGroupConfigLinkTable : groupConfigLinkTable;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
+            string postProcessingTimingColumn = HasColumn(tableName, "PostProcessingTiming", databaseName)
+                ? ", [PostProcessingTiming]"
+                : ", CAST(0 AS INT) AS [PostProcessingTiming]";
+
             string taskSql = $@"
                 SELECT
                     [Id],
                     [TaskName],
                     [TaskMode],
                     [CronExpression],
-                    [IsEnabled],
+                    [IsEnabled]
+                    {postProcessingTimingColumn},
                     [Description],
                     [CreateTime],
                     [UpdateTime]
@@ -133,13 +138,18 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             groupConfigLinkTable = string.IsNullOrEmpty(groupConfigLinkTable) ? DefaultGroupConfigLinkTable : groupConfigLinkTable;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
+            string postProcessingTimingColumn = HasColumn(tableName, "PostProcessingTiming", databaseName)
+                ? ", [PostProcessingTiming]"
+                : ", CAST(0 AS INT) AS [PostProcessingTiming]";
+
             string taskSql = $@"
                 SELECT
                     [Id],
                     [TaskName],
                     [TaskMode],
                     [CronExpression],
-                    [IsEnabled],
+                    [IsEnabled]
+                    {postProcessingTimingColumn},
                     [Description],
                     [CreateTime],
                     [UpdateTime]
@@ -176,13 +186,17 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             tableName = string.IsNullOrEmpty(tableName) ? DefaultTable : tableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
+            bool hasPostProcessingTiming = HasColumn(tableName, "PostProcessingTiming", databaseName);
+            string postProcessingTimingColumn = hasPostProcessingTiming ? ", [PostProcessingTiming]" : string.Empty;
+            string postProcessingTimingValue = hasPostProcessingTiming ? ", @PostProcessingTiming" : string.Empty;
+
             string sql = $@"
                 INSERT INTO [{tableName}] (
-                    [TaskName], [TaskMode], [CronExpression], [IsEnabled], [Description], [CreateTime], [UpdateTime]
+                    [TaskName], [TaskMode], [CronExpression], [IsEnabled]{postProcessingTimingColumn}, [Description], [CreateTime], [UpdateTime]
                 )
                 OUTPUT INSERTED.[Id]
                 VALUES (
-                    @TaskName, @TaskMode, @CronExpression, @IsEnabled, @Description, @CreateTime, @UpdateTime
+                    @TaskName, @TaskMode, @CronExpression, @IsEnabled{postProcessingTimingValue}, @Description, @CreateTime, @UpdateTime
                 );";
 
             object result = this.BaseRepository(databaseName).FindObject(sql, entity);
@@ -194,13 +208,18 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             tableName = string.IsNullOrEmpty(tableName) ? DefaultTable : tableName;
             databaseName = string.IsNullOrEmpty(databaseName) ? DefaultDb : databaseName;
 
+            string postProcessingTimingUpdate = HasColumn(tableName, "PostProcessingTiming", databaseName)
+                ? "[PostProcessingTiming] = @PostProcessingTiming,"
+                : string.Empty;
+
             string sql = $@"
-                UPDATE [{tableName}] 
-                SET 
-                    [TaskName] = @TaskName, 
-                    [TaskMode] = @TaskMode, 
-                    [CronExpression] = @CronExpression, 
+                UPDATE [{tableName}]
+                SET
+                    [TaskName] = @TaskName,
+                    [TaskMode] = @TaskMode,
+                    [CronExpression] = @CronExpression,
                     [IsEnabled] = @IsEnabled,
+                    {postProcessingTimingUpdate}
                     [Description] = @Description,
                     [UpdateTime] = @UpdateTime
                 WHERE [Id] = @Id";
@@ -381,6 +400,22 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
         /// <summary>
         /// 把关联组 records 组装到任务 DTO 上。
         /// </summary>
+        private bool HasColumn(string tableName, string columnName, string databaseName)
+        {
+            if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return false;
+
+            string cleanTableName = tableName.Trim('[', ']');
+            if (cleanTableName.Contains(".")) cleanTableName = cleanTableName.Split('.').Last().Trim('[', ']');
+
+            const string sql = @"
+                SELECT COUNT(1)
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = @TableName
+                  AND COLUMN_NAME = @ColumnName";
+
+            object result = this.BaseRepository(databaseName).FindObject(sql, new { TableName = cleanTableName, ColumnName = columnName });
+            return result != null && Convert.ToInt32(result) > 0;
+        }
         private void AttachGroups(
             List<AcquisitionTaskDto> tasks,
             List<TaskAssociatedGroupRecord> groupRecords)

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -31,6 +32,14 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private readonly SemaphoreSlim _concurrencySemaphore = new SemaphoreSlim(5);
         // 内存级文件指纹去重（防止同一周期内重复读取）
         private readonly ConcurrentHashSet<string> _processingFiles = new ConcurrentHashSet<string>();
+
+        private sealed class AcquisitionWorkItem
+        {
+            public AcquisitionConfig Config { get; set; }
+            public DateTime ProcessDate { get; set; }
+            public DateTime BusinessDate { get; set; }
+            public string PathKey { get; set; }
+        }
 
         // FTP 服务器凭证
         public DataAcquisitionService(
@@ -107,6 +116,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private async Task<AcquisitionSummary> ExecuteBatchInternal(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, CancellationToken ct, string updateSource)
         {
             var configList = (configs ?? Enumerable.Empty<AcquisitionConfig>()).ToList();
+            var workItems = BuildAcquisitionWorkItems(configList, start, end);
 
             // 采集开始：记录手动Task日志
             var taskLogEntry = new AcquisitionTaskLogEntry
@@ -114,7 +124,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 TaskId = 0,
                 StartTime = DateTime.Now,
                 Status = "Running",
-                TotalConfigs = configList.Count * ((end.Date - start.Date).Days + 1),
+                TotalConfigs = workItems.Count,
                 SuccessCount = 0,
                 FailureCount = 0,
                 ProcessedCount = 0,
@@ -123,7 +133,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             };
             string taskLogId = await _logService.RecordTaskLogEntryAsync(taskLogEntry, ct);
 
-            return await ExecuteBatchWithTaskLogAsync(configList, start, end, taskLogId, ct, updateSource).ConfigureAwait(false);
+            return await ExecuteBatchWithWorkItemsAsync(workItems, start, end, taskLogId, ct, updateSource).ConfigureAwait(false);
         }
 
         #endregion
@@ -198,14 +208,22 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// </summary>
         public async Task ProcessSingleConfig(AcquisitionConfig config, DateTime processDate, string taskLogId, CancellationToken ct = default, string updateSource = null, AcquisitionTestExecutionOptions testOptions = null)
         {
+            await ProcessSingleConfigInternal(config, processDate, processDate.Date, taskLogId, ct, updateSource, testOptions, null)
+                .ConfigureAwait(false);
+        }
+
+        private async Task ProcessSingleConfigInternal(AcquisitionConfig config, DateTime processDate, DateTime businessDate, string taskLogId, CancellationToken ct = default, string updateSource = null, AcquisitionTestExecutionOptions testOptions = null, string workKey = null, bool deferProcedurePostProcessing = false, ConcurrentDictionary<string, PostProcessingContext> deferredPostProcesses = null)
+        {
             updateSource = string.IsNullOrWhiteSpace(updateSource)
                 ? ResolveManualUpdateSource(processDate, processDate)
                 : updateSource;
 
             // 并发锁：防止重复启动同一任务
-            string fileKey = testOptions == null
-                ? $"{config.Id}_{processDate:yyyyMMdd}"
-                : $"{config.Id}_{processDate:yyyyMMdd}_{taskLogId}";
+            string fileKey = !string.IsNullOrWhiteSpace(workKey)
+                ? workKey
+                : testOptions == null
+                    ? $"{config.Id}_{processDate:yyyyMMdd}"
+                    : $"{config.Id}_{processDate:yyyyMMdd}_{taskLogId}";
             if (!_processingFiles.Add(fileKey)) return;
 
             string path = null;
@@ -240,9 +258,14 @@ namespace DT_DataAcquisitionSystem.Application.Services
                         .ConfigureAwait(false);
                     if (files != null && files.Any())
                     {
+                        var targetFileKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         foreach (var file in files)
                         {
-                            targetFiles.Add(BuildTargetFilePath(path, file));
+                            string targetFilePath = BuildTargetFilePath(path, file);
+                            if (targetFileKeys.Add(NormalizePathKey(targetFilePath)))
+                            {
+                                targetFiles.Add(targetFilePath);
+                            }
                         }
                     }
                 }
@@ -263,7 +286,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
                     {
                         // 核心：调用独立的单文件执行器
                         hasStartedFileProcessing = true;
-                        await ProcessFileInternal(config, processDate, filePath, taskLogId, provider, ct, updateSource, testOptions);
+                        await ProcessFileInternal(config, businessDate, filePath, taskLogId, provider, ct, updateSource, testOptions, deferProcedurePostProcessing, deferredPostProcesses);
                     }
                     catch (OperationCanceledException)
                     {
@@ -288,7 +311,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             {
                 if (!hasStartedFileProcessing)
                 {
-                    await RecordConfigFailureLogAsync(config, processDate, taskLogId, path, filename, ex, ct)
+                    await RecordConfigFailureLogAsync(config, businessDate, taskLogId, path, filename, ex, ct)
                         .ConfigureAwait(false);
                 }
 
@@ -304,7 +327,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         /// <summary>
         /// 核心执行器：处理具体的物理文件（包含断点续传、解析、入库、写日志）
         /// </summary>
-        private async Task ProcessFileInternal(AcquisitionConfig config, DateTime businessDate, string filePath, string taskLogId, IFileProvider provider, CancellationToken ct, string updateSource, AcquisitionTestExecutionOptions testOptions = null)
+        private async Task ProcessFileInternal(AcquisitionConfig config, DateTime businessDate, string filePath, string taskLogId, IFileProvider provider, CancellationToken ct, string updateSource, AcquisitionTestExecutionOptions testOptions = null, bool deferProcedurePostProcessing = false, ConcurrentDictionary<string, PostProcessingContext> deferredPostProcesses = null)
         {
             string actualFileName = Path.GetFileName(filePath);
             int startRow = 0;
@@ -383,44 +406,70 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
                     DataTable dataToInsert = _dataService.PopulateDataTable(processedData, schema);
                     var postProcessingRows = ExtractPostProcessingRowKeys(dataToInsert);
+                    bool hasInsertedRows = false;
                     if (shouldFullReload)
                     {
                         await _dataService.ReplaceFileDataAsync(dataToInsert, config.TableName, filePath, actualFileName, businessDate, ct)
                             .ConfigureAwait(false);
+                        hasInsertedRows = dataToInsert.Rows.Count > 0;
                     }
                     else
                     {
                         await _dataService.BulkInsertAsync(dataToInsert, config.TableName, ct);
+                        hasInsertedRows = dataToInsert.Rows.Count > 0;
                     }
-
                     // 6. 执行数据后处理 0 - 不处理；1 - 使用存储过程处理； 2- 使用C# Service处理
                     if (processedRows > 0)
                     {
-                        try
+                        var postProcessingContext = new PostProcessingContext
                         {
-                            await _postProcessingService.ProcessAsync(new PostProcessingContext
+                            Config = config,
+                            TaskLogId = taskLogId,
+                            BusinessDate = businessDate.Date,
+                            SourceTableName = config.TableName,
+                            PostTableName = config.PostTableName,
+                            FileName = actualFileName,
+                            FullPath = filePath,
+                            Rows = postProcessingRows
+                        };
+
+                        if (ShouldDeferProcedurePostProcessing(config, deferProcedurePostProcessing))
+                        {
+                            AddDeferredPostProcess(deferredPostProcesses, postProcessingContext);
+                        }
+                        else
+                        {
+                            try
                             {
-                                Config = config,
-                                TaskLogId = taskLogId,
-                                BusinessDate = businessDate.Date,
-                                SourceTableName = config.TableName,
-                                PostTableName = config.PostTableName,
-                                FileName = actualFileName,
-                                FullPath = filePath,
-                                Rows = postProcessingRows
-                            }, ct).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            throw;
-                        }
-                        catch (Exception ex)
-                        {
-                            throw new Exception("Post processing failed: " + ex.Message, ex);
+                                await _postProcessingService.ProcessAsync(postProcessingContext, ct).ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                throw;
+                            }
+                            catch (Exception ex)
+                            {
+                                string rollbackMessage = string.Empty;
+                                if (hasInsertedRows)
+                                {
+                                    try
+                                    {
+                                        int deletedRows = await _dataService.DeleteInsertedRowsAsync(dataToInsert, config.TableName, filePath, actualFileName, businessDate, CancellationToken.None)
+                                            .ConfigureAwait(false);
+                                        rollbackMessage = $" 已回滚本次入库数据 {deletedRows} 行。";
+                                    }
+                                    catch (Exception cleanupEx)
+                                    {
+                                        rollbackMessage = $" 后处理失败且回滚插入数据失败: {cleanupEx.Message}。";
+                                    }
+                                }
+
+                                throw new Exception("Post processing failed: " + ex.Message + rollbackMessage, ex);
+                            }
                         }
                     }
-                }
 
+                }
                 // 7. 成功：完善并写入明细日志
                 logEntry.ProcessedRows = processedRows;
                 logEntry.EndTime = DateTime.Now;
@@ -447,13 +496,24 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
                 // 继续向上抛出，让外层的 foreach 捕获（如果是文件夹模式，会被外层吃掉异常继续下一个；如果是单文件，可按需处理）
                 throw new Exception($"处理文件 {filePath} 失败: {ex.Message}", ex);
-            }
+            }
+
         }
 
         #endregion
 
         #region 批量处理结合日志系统
-        public async Task<AcquisitionSummary> ExecuteBatchWithTaskLogAsync(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default, string updateSource = null, bool sealOnSuccess = false)
+        public async Task<AcquisitionSummary> ExecuteBatchWithTaskLogAsync(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default, string updateSource = null, bool sealOnSuccess = false, PostProcessingTiming postProcessingTiming = PostProcessingTiming.PerFile)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            var workItems = BuildAcquisitionWorkItems(configs ?? Enumerable.Empty<AcquisitionConfig>(), start, end);
+            return await ExecuteBatchWithWorkItemsAsync(workItems, start, end, taskLogId, ct, updateSource, sealOnSuccess, postProcessingTiming)
+                .ConfigureAwait(false);
+        }
+
+        private async Task<AcquisitionSummary> ExecuteBatchWithWorkItemsAsync(IEnumerable<AcquisitionWorkItem> workItems, DateTime start, DateTime end, string taskLogId, CancellationToken ct = default, string updateSource = null, bool sealOnSuccess = false, PostProcessingTiming postProcessingTiming = PostProcessingTiming.PerFile)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
                 throw new ArgumentNullException(nameof(taskLogId));
@@ -462,10 +522,12 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 ? ResolveManualUpdateSource(start, end)
                 : updateSource;
 
-            var configList = (configs ?? Enumerable.Empty<AcquisitionConfig>()).ToList();
+            var workItemList = (workItems ?? Enumerable.Empty<AcquisitionWorkItem>()).ToList();
             var summary = new AcquisitionSummary();
+            var deferredPostProcesses = new ConcurrentDictionary<string, PostProcessingContext>(StringComparer.OrdinalIgnoreCase);
+            bool deferProcedurePostProcessing = postProcessingTiming == PostProcessingTiming.AfterTask;
 
-            int totalCount = configList.Count * ((end.Date - start.Date).Days + 1);
+            int totalCount = workItemList.Count;
 
             if (totalCount <= 0)
             {
@@ -484,58 +546,66 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
             var tasks = new List<Task>();
 
-            foreach (var config in configList)
+            foreach (var workItem in workItemList)
             {
-                for (var date = start.Date; date <= end.Date; date = date.AddDays(1))
+                ct.ThrowIfCancellationRequested();
+                var targetWorkItem = workItem;
+
+                var task = Task.Run(async () =>
                 {
-                    ct.ThrowIfCancellationRequested();
-                    var targetDate = date;
-
-                    var task = Task.Run(async () =>
+                    await _concurrencySemaphore.WaitAsync(ct).ConfigureAwait(false);
+                    try
                     {
-                        await _concurrencySemaphore.WaitAsync(ct).ConfigureAwait(false);
-                        try
+                        ct.ThrowIfCancellationRequested();
+                        await ProcessSingleConfigInternal(
+                                targetWorkItem.Config,
+                                targetWorkItem.ProcessDate,
+                                targetWorkItem.BusinessDate,
+                                taskLogId,
+                                ct,
+                                updateSource,
+                                null,
+                                targetWorkItem.PathKey,
+                                deferProcedurePostProcessing,
+                                deferredPostProcesses)
+                            .ConfigureAwait(false);
+                        Interlocked.Increment(ref summary.SuccessCount);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        Interlocked.Increment(ref summary.FailureCount);
+                        lock (summary.ErrorDetails)
                         {
-                            ct.ThrowIfCancellationRequested();
-                            await ProcessSingleConfig(config, targetDate, taskLogId, ct, updateSource).ConfigureAwait(false);
-                            Interlocked.Increment(ref summary.SuccessCount);
+                            summary.ErrorDetails.Add(
+                                $"[配置:{targetWorkItem.Config.EqName}][日期:{targetWorkItem.BusinessDate:yyyy-MM-dd}] 失败: {ex.Message}");
                         }
-                        catch (OperationCanceledException)
-                        {
-                            throw;
-                        }
-                        catch (Exception ex)
-                        {
-                            Interlocked.Increment(ref summary.FailureCount);
-                            lock (summary.ErrorDetails)
-                            {
-                                summary.ErrorDetails.Add(
-                                    $"[配置:{config.EqName}][日期:{targetDate:yyyy-MM-dd}] 失败: {ex.Message}");
-                            }
-                        }
-                        finally
-                        {
-                            int processedCount = summary.SuccessCount + summary.FailureCount;
+                    }
+                    finally
+                    {
+                        int processedCount = summary.SuccessCount + summary.FailureCount;
 
-                            if (!ct.IsCancellationRequested)
-                            {
-                                await _logService.UpdateTaskProgressAsync(
-                                    taskLogId,
-                                    "Running",
-                                    totalCount,
-                                    summary.SuccessCount,
-                                    summary.FailureCount,
-                                    $"运行中：{processedCount}/{totalCount}",
-                                    CancellationToken.None
-                                ).ConfigureAwait(false);
-                            }
-
-                            _concurrencySemaphore.Release();
+                        if (!ct.IsCancellationRequested)
+                        {
+                            await _logService.UpdateTaskProgressAsync(
+                                taskLogId,
+                                "Running",
+                                totalCount,
+                                summary.SuccessCount,
+                                summary.FailureCount,
+                                $"运行中：{processedCount}/{totalCount}",
+                                CancellationToken.None
+                            ).ConfigureAwait(false);
                         }
-                    }, ct);
 
-                    tasks.Add(task);
-                }
+                        _concurrencySemaphore.Release();
+                    }
+                }, ct);
+
+                tasks.Add(task);
             }
 
             try
@@ -551,6 +621,13 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 // 子任务异常已在各自内部累计失败数并记录，这里不重复抛出
             }
 
+            int postProcessingFailureCount = await ExecuteDeferredPostProcessingAsync(
+                    deferredPostProcesses.Values,
+                    taskLogId,
+                    summary,
+                    ct)
+                .ConfigureAwait(false);
+
             string finalStatus;
             if (summary.SuccessCount > 0 && summary.FailureCount == 0)
                 finalStatus = "Success";
@@ -560,6 +637,11 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 finalStatus = "PartialSuccess";
             else
                 finalStatus = "NoData";
+
+            if (postProcessingFailureCount > 0)
+            {
+                finalStatus = summary.SuccessCount > 0 ? "PartialSuccess" : "Failed";
+            }
 
             string finalMessage = BuildFinalMessage(finalStatus, summary);
 
@@ -581,6 +663,80 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return summary;
         }
 
+        private async Task<int> ExecuteDeferredPostProcessingAsync(IEnumerable<PostProcessingContext> contexts, string taskLogId, AcquisitionSummary summary, CancellationToken ct)
+        {
+            int failureCount = 0;
+            foreach (var context in contexts ?? Enumerable.Empty<PostProcessingContext>())
+            {
+                ct.ThrowIfCancellationRequested();
+                DateTime startTime = DateTime.Now;
+                try
+                {
+                    await _postProcessingService.ProcessAsync(context, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    failureCount++;
+                    string error = "Post processing failed: " + ex.Message;
+                    lock (summary.ErrorDetails)
+                    {
+                        summary.ErrorDetails.Add($"[任务级后处理:{context?.Config?.ProcedureName}][Flag:{context?.Config?.Flag}] 失败: {ex.Message}");
+                    }
+
+                    await RecordTaskPostProcessingFailureLogAsync(context, taskLogId, startTime, error, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            return failureCount;
+        }
+
+        private async Task RecordTaskPostProcessingFailureLogAsync(PostProcessingContext context, string taskLogId, DateTime startTime, string errorMessage, CancellationToken ct)
+        {
+            if (context?.Config == null || string.IsNullOrWhiteSpace(taskLogId)) return;
+
+            var logEntry = new AcquisitionLogEntry
+            {
+                TaskLogId = taskLogId,
+                ConfigId = context.Config.Id,
+                BusinessDate = context.BusinessDate.Date,
+                FileName = "任务级后处理",
+                FullFilePath = string.Empty,
+                StartRow = 0,
+                ProcessedRows = 0,
+                StartTime = startTime,
+                EndTime = DateTime.Now,
+                Status = "Failed",
+                ErrorMessage = TruncateErrorMessage(errorMessage)
+            };
+
+            await _logService.RecordLogEntryAsync(logEntry, ct).ConfigureAwait(false);
+        }
+
+        private static bool ShouldDeferProcedurePostProcessing(AcquisitionConfig config, bool deferProcedurePostProcessing)
+        {
+            return deferProcedurePostProcessing
+                && config != null
+                && config.PostProcessingType == PostProcessingType.Procedure
+                && !string.IsNullOrWhiteSpace(config.ProcedureName);
+        }
+
+        private static void AddDeferredPostProcess(ConcurrentDictionary<string, PostProcessingContext> deferredPostProcesses, PostProcessingContext context)
+        {
+            if (deferredPostProcesses == null || context?.Config == null) return;
+
+            string key = string.Join("|", new[]
+            {
+                context.Config.ProcedureName ?? string.Empty,
+                context.Config.Flag ?? string.Empty
+            });
+
+            deferredPostProcesses.TryAdd(key, context);
+        }
         private async Task RecordConfigFailureLogAsync(AcquisitionConfig config, DateTime processDate, string taskLogId, string path, string filename, Exception ex, CancellationToken ct)
         {
             if (config == null || string.IsNullOrWhiteSpace(taskLogId)) return;
@@ -602,6 +758,77 @@ namespace DT_DataAcquisitionSystem.Application.Services
             };
 
             await _logService.RecordLogEntryAsync(logEntry, ct).ConfigureAwait(false);
+        }
+
+        private static List<AcquisitionWorkItem> BuildAcquisitionWorkItems(IEnumerable<AcquisitionConfig> configs, DateTime start, DateTime end)
+        {
+            var result = new List<AcquisitionWorkItem>();
+            var folderKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var config in configs ?? Enumerable.Empty<AcquisitionConfig>())
+            {
+                for (var date = start.Date; date <= end.Date; date = date.AddDays(1))
+                {
+                    string fileName = FileDateTimeUtil.GetProcessedFileName(config, date);
+                    string path = FileDateTimeUtil.GetProcessedFilePath(config, date);
+                    bool folderMode = string.IsNullOrWhiteSpace(fileName);
+                    DateTime businessDate = ResolveWorkItemBusinessDate(config, date, folderMode);
+                    string pathKey = BuildWorkItemPathKey(config, date, path, folderMode);
+
+                    if (folderMode && !folderKeys.Add(pathKey))
+                    {
+                        continue;
+                    }
+
+                    result.Add(new AcquisitionWorkItem
+                    {
+                        Config = config,
+                        ProcessDate = date,
+                        BusinessDate = businessDate,
+                        PathKey = pathKey
+                    });
+                }
+            }
+
+            return result;
+        }
+
+        private static DateTime ResolveWorkItemBusinessDate(AcquisitionConfig config, DateTime processDate, bool folderMode)
+        {
+            if (!folderMode) return processDate.Date;
+
+            string pattern = config?.FilePathPattern ?? string.Empty;
+            if (ContainsDayToken(pattern)) return processDate.Date;
+            if (ContainsMonthToken(pattern)) return new DateTime(processDate.Year, processDate.Month, 1);
+            return new DateTime(1900, 1, 1);
+        }
+
+        private static string BuildWorkItemPathKey(AcquisitionConfig config, DateTime processDate, string path, bool folderMode)
+        {
+            string mode = folderMode ? "folder" : "file";
+            string datePart = folderMode ? string.Empty : processDate.ToString("yyyyMMdd");
+            string normalizedPath = NormalizePathKey(path);
+            return $"{config?.Id ?? 0}|{mode}|{datePart}|{normalizedPath}";
+        }
+
+        private static bool ContainsDayToken(string pattern)
+        {
+            return !string.IsNullOrWhiteSpace(pattern) &&
+                   (pattern.IndexOf("{dd}", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    pattern.IndexOf("{d}", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static bool ContainsMonthToken(string pattern)
+        {
+            return !string.IsNullOrWhiteSpace(pattern) &&
+                   (pattern.IndexOf("{MM}", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    pattern.IndexOf("{M}", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static string NormalizePathKey(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+            return path.Trim().TrimEnd('\\', '/').Replace('/', '\\');
         }
 
         private static string ResolveConfigFailureFileName(string path, string filename)

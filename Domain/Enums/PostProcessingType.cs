@@ -10,4 +10,10 @@
         Procedure = 2   // 使用存储过程
 
     }
+
+    public enum PostProcessingTiming
+    {
+        PerFile = 0,    // 每个文件入库后立即执行后处理
+        AfterTask = 1   // 任务采集完成后统一执行一次后处理
+    }
 }

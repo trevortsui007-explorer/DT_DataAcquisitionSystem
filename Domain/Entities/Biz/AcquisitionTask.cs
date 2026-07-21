@@ -17,6 +17,7 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
 
         public string CronExpression { get; set; }
         public int IsEnabled { get; set; }
+        public int PostProcessingTiming { get; set; }
         public string Description { get; set; }
         public DateTime CreateTime { get; set; }
         public DateTime UpdateTime { get; set; }
