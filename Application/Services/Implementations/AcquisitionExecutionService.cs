@@ -284,13 +284,17 @@ namespace DT_DataAcquisitionSystem.Application.Services
 
             if (status.Equals("Warning", StringComparison.OrdinalIgnoreCase))
             {
-                return string.Equals(GetErrorCategory(entry.Status, entry.ErrorMessage), "FileMissing", StringComparison.OrdinalIgnoreCase);
+                string category = GetErrorCategory(entry.Status, entry.ErrorMessage);
+                return string.Equals(category, "FileMissing", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(category, "PostProcessing", StringComparison.OrdinalIgnoreCase);
             }
 
             if (status.Equals("Failed", StringComparison.OrdinalIgnoreCase))
             {
+                string category = GetErrorCategory(entry.Status, entry.ErrorMessage);
                 return string.Equals(entry.Status, "Failed", StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(GetErrorCategory(entry.Status, entry.ErrorMessage), "FileMissing", StringComparison.OrdinalIgnoreCase);
+                    && !string.Equals(category, "FileMissing", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(category, "PostProcessing", StringComparison.OrdinalIgnoreCase);
             }
 
             return string.Equals(entry.Status, status, StringComparison.OrdinalIgnoreCase);

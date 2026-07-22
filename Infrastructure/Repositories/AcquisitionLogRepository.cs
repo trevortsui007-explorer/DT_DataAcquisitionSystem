@@ -331,8 +331,8 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 WHERE 1 = 1
                   AND (
                     @Status IS NULL
-                    OR (@Status = 'Warning' AND [ErrorCategory] = 'FileMissing')
-                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') <> 'FileMissing')
+                    OR (@Status = 'Warning' AND [ErrorCategory] IN ('FileMissing', 'PostProcessing'))
+                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing'))
                     OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
                   )
                   AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
@@ -396,8 +396,8 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                 WHERE 1 = 1
                   AND (
                     @Status IS NULL
-                    OR (@Status = 'Warning' AND [ErrorCategory] = 'FileMissing')
-                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') <> 'FileMissing')
+                    OR (@Status = 'Warning' AND [ErrorCategory] IN ('FileMissing', 'PostProcessing'))
+                    OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing'))
                     OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
                   )
                   AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
@@ -538,6 +538,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                     OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern2
                     OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern3
                     OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern4
+                    OR ISNULL([ErrorMessage], '') LIKE @PostProcessingPattern
                   )
                 GROUP BY CAST([TaskLogId] AS NVARCHAR(50));";
 
@@ -552,7 +553,8 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
                             FileMissingPattern1 = "%\u6587\u4ef6\u672a\u627e\u5230%",
                             FileMissingPattern2 = "%\u4e0d\u5b58\u5728%",
                             FileMissingPattern3 = "%\u672a\u627e\u5230\u53ef\u5904\u7406\u6587\u4ef6%",
-                            FileMissingPattern4 = "%File not found%"
+                            FileMissingPattern4 = "%File not found%",
+                            PostProcessingPattern = "%Post processing failed%"
                         },
                         cancellationToken: ct
                     )).ConfigureAwait(false);
