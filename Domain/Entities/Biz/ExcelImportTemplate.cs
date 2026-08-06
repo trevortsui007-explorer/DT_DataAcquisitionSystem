@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace DT_DataAcquisitionSystem.Domain.Entities
 {
@@ -30,6 +31,7 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
 
     public class ExcelTemplateDefinition
     {
+        public string SheetName { get; set; }
         public ExcelTemplateIdentity Identity { get; set; }
         public List<ExcelTemplateMetadataField> Metadata { get; set; }
         public ExcelTemplateDataRegion DataRegion { get; set; }
@@ -38,6 +40,12 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
         public Dictionary<string, object> FixedFields { get; set; }
         public Dictionary<string, string> RawFields { get; set; }
         public Dictionary<string, string> FilenameFields { get; set; }
+    }
+
+    public class FileNameParsingDefinition
+    {
+        public string ParserName { get; set; }
+        public JObject Options { get; set; }
     }
 
     public class ExcelTemplateIdentity

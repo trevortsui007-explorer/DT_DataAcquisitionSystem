@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Configuration;
 using System.Linq;
 using System.Threading;
@@ -67,6 +67,14 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
 
             // 11. 批量查询历史任务文件缺失 Warning 汇总
             Post["/task-logs/warning-summary", true] = async (p, ct) => await GetTaskLogWarningSummary(p, ct);
+
+            Get["/configs/{configId:int}/history", true] = async (p, ct) => await GetConfigHistory(p, ct);
+
+            Post["/configs/history-summary", true] = async (p, ct) => await GetConfigHistorySummary(p, ct);
+
+            Get["/configs/{configId:int}/file-states", true] = async (p, ct) => await GetConfigFileStates(p, ct);
+
+            Post["/configs/file-state-summary", true] = async (p, ct) => await GetConfigFileStateSummary(p, ct);
         }
 
         #region 启动接口
@@ -493,12 +501,14 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                 string pageSizeParam = this.GetParam("pageSize");
                 string status = this.GetParam("status");
                 string errorCategory = this.GetParam("errorCategory");
+                string viewMode = this.GetParam("viewMode");
                 bool hasProcessedRows = IsTruthy(this.GetParam("hasProcessedRows"));
                 bool usePaging =
                     !string.IsNullOrWhiteSpace(pageNoParam) ||
                     !string.IsNullOrWhiteSpace(pageSizeParam) ||
                     !string.IsNullOrWhiteSpace(status) ||
                     !string.IsNullOrWhiteSpace(errorCategory) ||
+                    !string.IsNullOrWhiteSpace(viewMode) ||
                     hasProcessedRows;
 
                 object result;
@@ -512,9 +522,18 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
                     if (pageSize <= 0) pageSize = 10;
                     if (pageSize > 200) pageSize = 200;
 
-                    result = await _executionService
-                        .GetTaskDetailsAsync(taskLogId, pageNo, pageSize, status, errorCategory, hasProcessedRows, ct)
-                        .ConfigureAwait(false);
+                    if (string.Equals(viewMode, "config", StringComparison.OrdinalIgnoreCase))
+                    {
+                        result = await _executionService
+                            .GetTaskConfigDetailGroupsAsync(taskLogId, pageNo, pageSize, status, errorCategory, hasProcessedRows, ct)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        result = await _executionService
+                            .GetTaskDetailsAsync(taskLogId, pageNo, pageSize, status, errorCategory, hasProcessedRows, ct)
+                            .ConfigureAwait(false);
+                    }
                 }
                 else
                 {
@@ -635,6 +654,149 @@ namespace DT_DataAcquisitionSystem.WebApi.Controllers
             }
         }
 
+        /// <summary>
+        /// GET /configs/{configId}/history
+        /// </summary>
+        private async Task<Response> GetConfigHistory(dynamic p, CancellationToken ct)
+        {
+            int configId = (int)p.configId;
+            if (configId <= 0)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：configId 必须大于 0",
+                    null);
+            }
+
+            int pageNo = int.TryParse(this.GetParam("pageNo"), out var pn) ? pn : 1;
+            int pageSize = int.TryParse(this.GetParam("pageSize"), out var ps) ? ps : 10;
+            string status = this.GetParam("status");
+            string errorCategory = this.GetParam("errorCategory");
+            bool hasProcessedRows = IsTruthy(this.GetParam("hasProcessedRows"));
+            DateTime? startTime = DateTime.TryParse(this.GetParam("startTime"), out var st) ? st : (DateTime?)null;
+            DateTime? endTime = DateTime.TryParse(this.GetParam("endTime"), out var et) ? et : (DateTime?)null;
+
+            if (pageNo <= 0) pageNo = 1;
+            if (pageSize <= 0) pageSize = 10;
+            if (pageSize > 200) pageSize = 200;
+
+            try
+            {
+                var result = await _executionService
+                    .GetConfigHistoryAsync(configId, startTime, endTime, pageNo, pageSize, status, errorCategory, hasProcessedRows, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取配置采集历史成功",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"获取配置采集历史异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// POST /configs/history-summary
+        /// </summary>
+        private async Task<Response> GetConfigHistorySummary(dynamic p, CancellationToken ct)
+        {
+            try
+            {
+                var request = this.Bind<ConfigHistorySummaryRequestDto>() ?? new ConfigHistorySummaryRequestDto();
+                var result = await _executionService
+                    .GetConfigHistorySummaryAsync(request.ConfigIds, request.StartTime, request.EndTime, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取配置历史汇总成功",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"获取配置历史汇总异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// GET /configs/{configId}/file-states
+        /// </summary>
+        private async Task<Response> GetConfigFileStates(dynamic p, CancellationToken ct)
+        {
+            int configId = (int)p.configId;
+            if (configId <= 0)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "参数错误：configId 必须大于 0",
+                    null);
+            }
+
+            int pageNo = int.TryParse(this.GetParam("pageNo"), out var pn) ? pn : 1;
+            int pageSize = int.TryParse(this.GetParam("pageSize"), out var ps) ? ps : 10;
+            string status = this.GetParam("status");
+            bool hasProcessedRows = IsTruthy(this.GetParam("hasProcessedRows"));
+            DateTime? startTime = DateTime.TryParse(this.GetParam("startTime"), out var st) ? st : (DateTime?)null;
+            DateTime? endTime = DateTime.TryParse(this.GetParam("endTime"), out var et) ? et : (DateTime?)null;
+
+            if (pageNo <= 0) pageNo = 1;
+            if (pageSize <= 0) pageSize = 10;
+            if (pageSize > 200) pageSize = 200;
+
+            try
+            {
+                var result = await _executionService
+                    .GetConfigFileStatesAsync(configId, startTime, endTime, pageNo, pageSize, status, hasProcessedRows, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取配置文件状态成功",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"获取配置文件状态异常: {ex.Message}",
+                    null);
+            }
+        }
+
+        /// <summary>
+        /// POST /configs/file-state-summary
+        /// </summary>
+        private async Task<Response> GetConfigFileStateSummary(dynamic p, CancellationToken ct)
+        {
+            try
+            {
+                var request = this.Bind<ConfigFileStateSummaryRequestDto>() ?? new ConfigFileStateSummaryRequestDto();
+                var result = await _executionService
+                    .GetConfigFileStateSummaryAsync(request.ConfigIds, request.StartTime, request.EndTime, ct)
+                    .ConfigureAwait(false);
+
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.success,
+                    "获取配置文件状态汇总成功",
+                    result);
+            }
+            catch (Exception ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"获取配置文件状态汇总异常: {ex.Message}",
+                    null);
+            }
+        }
         #endregion
     }
 }
+

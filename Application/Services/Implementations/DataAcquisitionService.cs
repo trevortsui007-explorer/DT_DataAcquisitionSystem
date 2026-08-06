@@ -1130,8 +1130,10 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 }
 
                 var templateParser = new TemplateExcelParser();
-                return await templateParser.ParseAsync(stream, template, config, fileName, fullPath, startRow, ct)
+                var parsedRows = await templateParser.ParseAsync(stream, template, config, fileName, fullPath, startRow, ct)
                     .ConfigureAwait(false);
+                var fileNameParsing = ResolveFileNameParsing(config);
+                return FileNameParserIocHelper.Enrich(parsedRows, fileName, fullPath, fileNameParsing);
             }
 
             string ext = Path.GetExtension(fullPath);
@@ -1144,8 +1146,17 @@ namespace DT_DataAcquisitionSystem.Application.Services
                 hasExtFields: !string.IsNullOrWhiteSpace(config.ExtFields),
                 extFields: config.ExtFields);
 
-            return await parser.ParseAsync<Dictionary<string, object>>(stream, options, ct)
+            var standardRows = await parser.ParseAsync<Dictionary<string, object>>(stream, options, ct)
                 .ConfigureAwait(false);
+            var standardFileNameParsing = ResolveFileNameParsing(config);
+            return FileNameParserIocHelper.Enrich(standardRows, fileName, fullPath, standardFileNameParsing);
+        }
+
+        private static FileNameParsingDefinition ResolveFileNameParsing(AcquisitionConfig config)
+        {
+            JObject parserOptions = ParseParserOptions(config?.ParserOptions);
+            JObject definition = GetObjectIgnoreCase(parserOptions, "filenameParsing");
+            return definition?.ToObject<FileNameParsingDefinition>();
         }
 
         private static bool IsTemplateExcelConfig(AcquisitionConfig config)

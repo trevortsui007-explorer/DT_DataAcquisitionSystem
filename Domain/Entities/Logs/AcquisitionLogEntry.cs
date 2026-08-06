@@ -42,6 +42,52 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
         public string ErrorMessage { get; set; }
     }
 
+    public class AcquisitionLogConfigGroup
+    {
+        public int ConfigId { get; set; }
+        public string ConfigName { get; set; }
+        public int TotalFiles { get; set; }
+        public int SuccessFiles { get; set; }
+        public int WarningFiles { get; set; }
+        public int FailedFiles { get; set; }
+        public int ProcessedRows { get; set; }
+    }
+
+    public class AcquisitionLogConfigTaskGroup
+    {
+        public string TaskLogId { get; set; }
+        public string TaskCode { get; set; }
+        public string TriggerType { get; set; }
+        public string TaskStatus { get; set; }
+        public DateTime? StartTime { get; set; }
+        public DateTime? EndTime { get; set; }
+        public int TotalFiles { get; set; }
+        public int SuccessFiles { get; set; }
+        public int WarningFiles { get; set; }
+        public int FailedFiles { get; set; }
+        public int ProcessedRows { get; set; }
+    }
+
+    public class AcquisitionLogConfigHistorySummary
+    {
+        public int ConfigId { get; set; }
+        public int TotalFiles { get; set; }
+        public int SuccessFiles { get; set; }
+        public int WarningFiles { get; set; }
+        public int FailedFiles { get; set; }
+        public int ProcessedRows { get; set; }
+    }
+
+    public class AcquisitionFileStateSummary
+    {
+        public int ConfigId { get; set; }
+        public int TotalFiles { get; set; }
+        public int SuccessFiles { get; set; }
+        public int FailedFiles { get; set; }
+        public int ProcessedRows { get; set; }
+        public int NewFiles { get; set; }
+    }
+
     /// <summary>
     /// 文件采集状态快照表：记录单个业务日期文件的当前行数和水位。
     /// </summary>
@@ -94,3 +140,4 @@ namespace DT_DataAcquisitionSystem.Domain.Entities
         public DateTime UpdateTime { get; set; }
     }
 }
+

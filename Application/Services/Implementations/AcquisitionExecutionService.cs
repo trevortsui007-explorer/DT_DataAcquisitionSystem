@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -17,6 +17,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
         private readonly IFileConfigService _fileConfigService;
         private readonly ILogCodeGenerator _logCodeGenerator;
         private readonly DT_DataAcquisitionSystem.Domain.Interfaces.IAcquisitionTaskService _taskService;
+        private readonly IAcquisitionFileStateService _fileStateService;
         private static readonly ConcurrentDictionary<string, CancellationTokenSource> RunningTasks =
             new ConcurrentDictionary<string, CancellationTokenSource>(StringComparer.OrdinalIgnoreCase);
 
@@ -30,6 +31,7 @@ namespace DT_DataAcquisitionSystem.Application.Services
             _acquisitionLogService = acquisitionLogService ?? throw new ArgumentNullException(nameof(acquisitionLogService));
             _fileConfigService = fileConfigService ?? throw new ArgumentNullException(nameof(fileConfigService));
             _logCodeGenerator = logCodeGenerator ?? throw new ArgumentNullException(nameof(logCodeGenerator));
+            _fileStateService = new AcquisitionFileStateService();
             try
             {
                 _taskService = TaskIocHelper.GetTaskService();
@@ -191,6 +193,226 @@ namespace DT_DataAcquisitionSystem.Application.Services
             };
         }
 
+        public async Task<PagedResultDto<TaskConfigDetailGroupDto>> GetTaskConfigDetailGroupsAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 10 : pageSize;
+
+            if (safePageSize > 200)
+            {
+                safePageSize = 200;
+            }
+
+            var groups = await _acquisitionLogService.GetLogConfigGroupsByTaskLogIdAsync(
+                taskLogId,
+                safePageNo,
+                safePageSize,
+                status,
+                errorCategory,
+                hasProcessedRows,
+                ct).ConfigureAwait(false);
+
+            var total = await _acquisitionLogService.GetLogConfigGroupsCountByTaskLogIdAsync(
+                taskLogId,
+                status,
+                errorCategory,
+                hasProcessedRows,
+                ct).ConfigureAwait(false);
+
+            var configIds = (groups ?? new List<AcquisitionLogConfigGroup>())
+                .Select(x => x.ConfigId)
+                .Distinct()
+                .ToArray();
+
+            var details = await _acquisitionLogService.GetLatestLogsByTaskLogIdAndConfigIdsAsync(
+                taskLogId,
+                configIds,
+                10,
+                status,
+                errorCategory,
+                hasProcessedRows,
+                ct).ConfigureAwait(false);
+
+            var detailsByConfig = (details ?? new List<AcquisitionLogEntry>())
+                .GroupBy(x => x.ConfigId)
+                .ToDictionary(x => x.Key, x => x.Select(ToTaskDetailLogDto).ToList());
+
+            var items = (groups ?? new List<AcquisitionLogConfigGroup>())
+                .Select(group => new TaskConfigDetailGroupDto
+                {
+                    ConfigId = group.ConfigId,
+                    ConfigName = group.ConfigName,
+                    TotalFiles = group.TotalFiles,
+                    SuccessFiles = group.SuccessFiles,
+                    WarningFiles = group.WarningFiles,
+                    FailedFiles = group.FailedFiles,
+                    ProcessedRows = group.ProcessedRows,
+                    LatestDetails = detailsByConfig.TryGetValue(group.ConfigId, out var groupDetails)
+                        ? groupDetails
+                        : new List<TaskDetailLogDto>()
+                })
+                .ToList();
+
+            return new PagedResultDto<TaskConfigDetailGroupDto>
+            {
+                Items = items,
+                Total = total,
+                PageNo = safePageNo,
+                PageSize = safePageSize
+            };
+        }
+
+        public async Task<PagedResultDto<ConfigHistoryTaskGroupDto>> GetConfigHistoryAsync(int configId, DateTime? startTime, DateTime? endTime, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (configId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(configId));
+
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 10 : pageSize;
+
+            if (safePageSize > 200)
+            {
+                safePageSize = 200;
+            }
+
+            var groups = await _acquisitionLogService.GetLogConfigHistoryTaskGroupsAsync(
+                configId,
+                startTime,
+                endTime,
+                safePageNo,
+                safePageSize,
+                status,
+                errorCategory,
+                hasProcessedRows,
+                ct).ConfigureAwait(false);
+
+            var total = await _acquisitionLogService.GetLogConfigHistoryTaskGroupsCountAsync(
+                configId,
+                startTime,
+                endTime,
+                status,
+                errorCategory,
+                hasProcessedRows,
+                ct).ConfigureAwait(false);
+
+            var taskLogIds = (groups ?? new List<AcquisitionLogConfigTaskGroup>())
+                .Select(x => x.TaskLogId)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            var details = await _acquisitionLogService.GetLatestLogsByConfigIdAndTaskLogIdsAsync(
+                configId,
+                taskLogIds,
+                10,
+                startTime,
+                endTime,
+                status,
+                errorCategory,
+                hasProcessedRows,
+                ct).ConfigureAwait(false);
+
+            var detailsByTask = (details ?? new List<AcquisitionLogEntry>())
+                .GroupBy(x => x.TaskLogId ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.Select(ToTaskDetailLogDto).ToList(), StringComparer.OrdinalIgnoreCase);
+
+            var items = (groups ?? new List<AcquisitionLogConfigTaskGroup>())
+                .Select(group => new ConfigHistoryTaskGroupDto
+                {
+                    TaskLogId = group.TaskLogId,
+                    TaskCode = group.TaskCode,
+                    TriggerType = group.TriggerType,
+                    TaskStatus = group.TaskStatus,
+                    StartTime = group.StartTime,
+                    EndTime = group.EndTime,
+                    TotalFiles = group.TotalFiles,
+                    SuccessFiles = group.SuccessFiles,
+                    WarningFiles = group.WarningFiles,
+                    FailedFiles = group.FailedFiles,
+                    ProcessedRows = group.ProcessedRows,
+                    LatestDetails = detailsByTask.TryGetValue(group.TaskLogId ?? string.Empty, out var groupDetails)
+                        ? groupDetails
+                        : new List<TaskDetailLogDto>()
+                })
+                .ToList();
+
+            return new PagedResultDto<ConfigHistoryTaskGroupDto>
+            {
+                Items = items,
+                Total = total,
+                PageNo = safePageNo,
+                PageSize = safePageSize
+            };
+        }
+
+        public async Task<List<ConfigHistorySummaryDto>> GetConfigHistorySummaryAsync(IEnumerable<int> configIds, DateTime? startTime = null, DateTime? endTime = null, CancellationToken ct = default)
+        {
+            var summaries = await _acquisitionLogService.GetLogConfigHistorySummariesAsync(configIds, startTime, endTime, ct).ConfigureAwait(false);
+
+            return (summaries ?? new List<AcquisitionLogConfigHistorySummary>())
+                .Select(x => new ConfigHistorySummaryDto
+                {
+                    ConfigId = x.ConfigId,
+                    TotalFiles = x.TotalFiles,
+                    SuccessFiles = x.SuccessFiles,
+                    WarningFiles = x.WarningFiles,
+                    FailedFiles = x.FailedFiles,
+                    ProcessedRows = x.ProcessedRows
+                })
+                .ToList();
+        }
+
+        public async Task<PagedResultDto<ConfigFileStateDto>> GetConfigFileStatesAsync(int configId, DateTime? startTime, DateTime? endTime, int pageNo, int pageSize, string status = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (configId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(configId));
+
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 10 : pageSize;
+
+            if (safePageSize > 200)
+            {
+                safePageSize = 200;
+            }
+
+            var range = ResolveFileStateDateRange(startTime, endTime);
+            var states = await _fileStateService.GetPagedByConfigAndDateRangeAsync(
+                configId,
+                range.StartDate,
+                range.EndDate,
+                safePageNo,
+                safePageSize,
+                status,
+                hasProcessedRows,
+                ct).ConfigureAwait(false);
+
+            var total = await _fileStateService.GetCountByConfigAndDateRangeAsync(
+                configId,
+                range.StartDate,
+                range.EndDate,
+                status,
+                hasProcessedRows,
+                ct).ConfigureAwait(false);
+
+            return new PagedResultDto<ConfigFileStateDto>
+            {
+                Items = (states ?? new List<AcquisitionFileState>()).Select(ToConfigFileStateDto).ToList(),
+                Total = total,
+                PageNo = safePageNo,
+                PageSize = safePageSize
+            };
+        }
+
+        public async Task<List<ConfigFileStateSummaryDto>> GetConfigFileStateSummaryAsync(IEnumerable<int> configIds, DateTime? startTime = null, DateTime? endTime = null, CancellationToken ct = default)
+        {
+            var range = ResolveFileStateDateRange(startTime, endTime);
+            return await _fileStateService
+                .GetSummaryByConfigIdsAsync(configIds, range.StartDate, range.EndDate, ct)
+                .ConfigureAwait(false);
+        }
         public async Task<TaskDetailSummaryDto> GetTaskDetailSummaryAsync(string taskLogId, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
@@ -254,6 +476,46 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return "Unknown";
         }
 
+        private static (DateTime StartDate, DateTime EndDate) ResolveFileStateDateRange(DateTime? startTime, DateTime? endTime)
+        {
+            var startDate = (startTime ?? DateTime.Now.AddDays(-30)).Date;
+            var endDate = (endTime ?? DateTime.Now).Date;
+
+            if (endDate < startDate)
+            {
+                var temp = startDate;
+                startDate = endDate;
+                endDate = temp;
+            }
+
+            return (startDate, endDate);
+        }
+
+        private static ConfigFileStateDto ToConfigFileStateDto(AcquisitionFileState x)
+        {
+            return new ConfigFileStateDto
+            {
+                Id = x.Id,
+                ConfigId = x.ConfigId,
+                BusinessDate = x.BusinessDate,
+                FileName = x.FileName,
+                FullPath = x.FullPath,
+                DataRowCount = x.DataRowCount,
+                LastStartRow = x.LastStartRow,
+                LastProcessedRows = x.LastProcessedRows,
+                LastTaskLogId = x.LastTaskLogId,
+                LastStatus = x.LastStatus,
+                LastUpdateSource = x.LastUpdateSource,
+                IsSealed = x.IsSealed,
+                SealTime = x.SealTime,
+                LastScanTime = x.LastScanTime,
+                LastWriteTime = x.LastWriteTime,
+                LastWriteTimeUtc = x.LastWriteTimeUtc,
+                FileSize = x.FileSize,
+                CreateTime = x.CreateTime,
+                UpdateTime = x.UpdateTime
+            };
+        }
         private static TaskDetailLogDto ToTaskDetailLogDto(AcquisitionLogEntry x)
         {
             string category = GetErrorCategory(x.Status, x.ErrorMessage);
@@ -682,3 +944,4 @@ namespace DT_DataAcquisitionSystem.Application.Services
         }
     }
 }
+

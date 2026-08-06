@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -48,6 +48,20 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
         /// </summary>
         Task<int> GetLogsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default);
 
+        Task<List<AcquisitionLogConfigGroup>> GetLogConfigGroupsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default);
+
+        Task<int> GetLogConfigGroupsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default);
+
+        Task<List<AcquisitionLogEntry>> GetLatestLogsByTaskLogIdAndConfigIdsAsync(string taskLogId, IEnumerable<int> configIds, int takePerConfig = 10, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default);
+
+        Task<List<AcquisitionLogConfigTaskGroup>> GetLogConfigHistoryTaskGroupsAsync(int configId, DateTime? startTime, DateTime? endTime, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default);
+
+        Task<int> GetLogConfigHistoryTaskGroupsCountAsync(int configId, DateTime? startTime, DateTime? endTime, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default);
+
+        Task<List<AcquisitionLogEntry>> GetLatestLogsByConfigIdAndTaskLogIdsAsync(int configId, IEnumerable<string> taskLogIds, int takePerTask = 10, DateTime? startTime = null, DateTime? endTime = null, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default);
+
+        Task<List<AcquisitionLogConfigHistorySummary>> GetLogConfigHistorySummariesAsync(IEnumerable<int> configIds, DateTime? startTime = null, DateTime? endTime = null, CancellationToken ct = default);
+
         /// <summary>
         /// 按任务日志 Id 获取任务明细处理行数汇总
         /// </summary>
@@ -80,8 +94,15 @@ namespace DT_DataAcquisitionSystem.Domain.Interfaces
 
         Task<List<AcquisitionFileState>> GetByConfigAndDateRangeAsync(int configId, DateTime startDate, DateTime endDate, CancellationToken ct = default);
 
+        Task<List<AcquisitionFileState>> GetPagedByConfigAndDateRangeAsync(int configId, DateTime startDate, DateTime endDate, int pageNo, int pageSize, string status = null, bool hasProcessedRows = false, CancellationToken ct = default);
+
+        Task<int> GetCountByConfigAndDateRangeAsync(int configId, DateTime startDate, DateTime endDate, string status = null, bool hasProcessedRows = false, CancellationToken ct = default);
+
+        Task<List<AcquisitionFileStateSummary>> GetSummaryByConfigIdsAsync(IEnumerable<int> configIds, DateTime startDate, DateTime endDate, CancellationToken ct = default);
+
         Task<bool> UpsertSuccessAsync(AcquisitionFileState state, bool allowSealedUpdate, CancellationToken ct = default);
 
         Task<int> SealByTaskLogAsync(string taskLogId, CancellationToken ct = default);
     }
 }
+

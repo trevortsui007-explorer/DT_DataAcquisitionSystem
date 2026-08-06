@@ -44,7 +44,7 @@ namespace DT_DataAcquisitionSystem.Infrastructure
             var workbook = WorkbookFactory.Create(stream);
             try
             {
-                ISheet sheet = workbook.GetSheetAt(0);
+                ISheet sheet = ResolveSheet(workbook, definition);
                 definition = ResolveDefinitionForWorkbook(sheet, template, definition);
                 ValidateTemplateTitle(sheet, definition);
 
@@ -139,6 +139,23 @@ namespace DT_DataAcquisitionSystem.Infrastructure
             {
                 (workbook as IDisposable)?.Dispose();
             }
+        }
+
+        private static ISheet ResolveSheet(IWorkbook workbook, ExcelTemplateDefinition definition)
+        {
+            if (string.IsNullOrWhiteSpace(definition?.SheetName))
+            {
+                return workbook.GetSheetAt(0);
+            }
+
+            string sheetName = definition.SheetName.Trim();
+            ISheet sheet = workbook.GetSheet(sheetName);
+            if (sheet == null)
+            {
+                throw new InvalidOperationException($"Template sheet not found: {sheetName}");
+            }
+
+            return sheet;
         }
 
         private static void ApplyTemplateSystemFields(Dictionary<string, object> row, ExcelTemplateDefinition definition, AcquisitionConfig config, int rowNumber, string fullFilePath, object[] rawValues)

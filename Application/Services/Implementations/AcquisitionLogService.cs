@@ -1,8 +1,9 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using DT_DataAcquisitionSystem.Application.DTOs;
 using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Domain.Interfaces;
 using DT_DataAcquisitionSystem.Infrastructure.Repositories;
@@ -244,6 +245,91 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return await _logRepo.GetLogsCountByTaskLogIdAsync(taskLogId, status, errorCategory, hasProcessedRows, ct).ConfigureAwait(false);
         }
 
+        public async Task<List<AcquisitionLogConfigGroup>> GetLogConfigGroupsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            return await _logRepo.GetLogConfigGroupsByTaskLogIdAsync(taskLogId, pageNo, pageSize, status, errorCategory, hasProcessedRows, ct).ConfigureAwait(false);
+        }
+
+        public async Task<int> GetLogConfigGroupsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            return await _logRepo.GetLogConfigGroupsCountByTaskLogIdAsync(taskLogId, status, errorCategory, hasProcessedRows, ct).ConfigureAwait(false);
+        }
+
+        public async Task<List<AcquisitionLogEntry>> GetLatestLogsByTaskLogIdAndConfigIdsAsync(string taskLogId, IEnumerable<int> configIds, int takePerConfig = 10, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(taskLogId))
+                throw new ArgumentNullException(nameof(taskLogId));
+
+            var ids = (configIds ?? Enumerable.Empty<int>())
+                .Where(x => x > 0)
+                .Distinct()
+                .ToArray();
+
+            if (ids.Length == 0)
+            {
+                return new List<AcquisitionLogEntry>();
+            }
+
+            return await _logRepo.GetLatestLogsByTaskLogIdAndConfigIdsAsync(taskLogId, ids, takePerConfig, status, errorCategory, hasProcessedRows, ct).ConfigureAwait(false);
+        }
+
+        public async Task<List<AcquisitionLogConfigTaskGroup>> GetLogConfigHistoryTaskGroupsAsync(int configId, DateTime? startTime, DateTime? endTime, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (configId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(configId));
+
+            return await _logRepo.GetLogConfigHistoryTaskGroupsAsync(configId, startTime, endTime, pageNo, pageSize, status, errorCategory, hasProcessedRows, ct).ConfigureAwait(false);
+        }
+
+        public async Task<int> GetLogConfigHistoryTaskGroupsCountAsync(int configId, DateTime? startTime, DateTime? endTime, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (configId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(configId));
+
+            return await _logRepo.GetLogConfigHistoryTaskGroupsCountAsync(configId, startTime, endTime, status, errorCategory, hasProcessedRows, ct).ConfigureAwait(false);
+        }
+
+        public async Task<List<AcquisitionLogEntry>> GetLatestLogsByConfigIdAndTaskLogIdsAsync(int configId, IEnumerable<string> taskLogIds, int takePerTask = 10, DateTime? startTime = null, DateTime? endTime = null, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (configId <= 0)
+                throw new ArgumentOutOfRangeException(nameof(configId));
+
+            var ids = (taskLogIds ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (ids.Length == 0)
+            {
+                return new List<AcquisitionLogEntry>();
+            }
+
+            return await _logRepo.GetLatestLogsByConfigIdAndTaskLogIdsAsync(configId, ids, takePerTask, startTime, endTime, status, errorCategory, hasProcessedRows, ct).ConfigureAwait(false);
+        }
+
+        public async Task<List<AcquisitionLogConfigHistorySummary>> GetLogConfigHistorySummariesAsync(IEnumerable<int> configIds, DateTime? startTime = null, DateTime? endTime = null, CancellationToken ct = default)
+        {
+            var ids = (configIds ?? Enumerable.Empty<int>())
+                .Where(x => x > 0)
+                .Distinct()
+                .Take(500)
+                .ToArray();
+
+            if (ids.Length == 0)
+            {
+                return new List<AcquisitionLogConfigHistorySummary>();
+            }
+
+            return await _logRepo.GetLogConfigHistorySummariesAsync(ids, startTime, endTime, ct).ConfigureAwait(false);
+        }
+
         public async Task<int> GetLogsProcessedRowsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(taskLogId))
@@ -410,6 +496,44 @@ namespace DT_DataAcquisitionSystem.Application.Services
             return _fileStateRepository.GetByConfigAndDateRangeAsync(configId, startDate.Date, endDate.Date, ct);
         }
 
+        public Task<List<AcquisitionFileState>> GetPagedByConfigAndDateRangeAsync(int configId, DateTime startDate, DateTime endDate, int pageNo, int pageSize, string status = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (configId <= 0)
+            {
+                return Task.FromResult(new List<AcquisitionFileState>());
+            }
+
+            return _fileStateRepository.GetPagedByConfigAndDateRangeAsync(configId, startDate.Date, endDate.Date, pageNo, pageSize, status, hasProcessedRows, ct);
+        }
+
+        public Task<int> GetCountByConfigAndDateRangeAsync(int configId, DateTime startDate, DateTime endDate, string status = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            if (configId <= 0)
+            {
+                return Task.FromResult(0);
+            }
+
+            return _fileStateRepository.GetCountByConfigAndDateRangeAsync(configId, startDate.Date, endDate.Date, status, hasProcessedRows, ct);
+        }
+
+        public async Task<List<ConfigFileStateSummaryDto>> GetSummaryByConfigIdsAsync(IEnumerable<int> configIds, DateTime startDate, DateTime endDate, CancellationToken ct = default)
+        {
+            var summaries = await _fileStateRepository
+                .GetSummaryByConfigIdsAsync(configIds, startDate.Date, endDate.Date, ct)
+                .ConfigureAwait(false);
+
+            return (summaries ?? new List<AcquisitionFileStateSummary>())
+                .Select(x => new ConfigFileStateSummaryDto
+                {
+                    ConfigId = x.ConfigId,
+                    TotalFiles = x.TotalFiles,
+                    SuccessFiles = x.SuccessFiles,
+                    FailedFiles = x.FailedFiles,
+                    ProcessedRows = x.ProcessedRows,
+                    NewFiles = x.NewFiles
+                })
+                .ToList();
+        }
         private static string NormalizeUpdateSource(string updateSource)
         {
             return string.IsNullOrWhiteSpace(updateSource)
@@ -426,3 +550,4 @@ namespace DT_DataAcquisitionSystem.Application.Services
         }
     }
 }
+

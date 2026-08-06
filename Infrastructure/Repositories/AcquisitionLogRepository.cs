@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
@@ -423,6 +423,532 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             }
         }
 
+        public async Task<List<AcquisitionLogConfigGroup>> GetLogConfigGroupsByTaskLogIdAsync(string taskLogId, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            const string sql = @"
+                WITH FilteredLogs AS
+                (
+                    SELECT
+                        [ConfigId],
+                        [ProcessedRows],
+                        [StartTime],
+                        [Status],
+                        [ErrorMessage],
+                        CASE
+                            WHEN [Status] = 'Success' THEN NULL
+                            WHEN ISNULL([ErrorMessage], '') LIKE @PostProcessingPattern THEN 'PostProcessing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @FileMissingPattern1 OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern2 OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern3 OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern4 THEN 'FileMissing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern1 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern2 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern3 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern4 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern5 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern6 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern7 THEN 'PathCredential'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @PermissionLockedPattern1 OR ISNULL([ErrorMessage], '') LIKE @PermissionLockedPattern2 OR ISNULL([ErrorMessage], '') LIKE @PermissionLockedPattern3 OR ISNULL([ErrorMessage], '') LIKE '%Access denied%' THEN 'PermissionLocked'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern1 OR ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern2 OR ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern3 OR ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern4 OR ISNULL([ErrorMessage], '') LIKE '%Sheet%' THEN 'FormatHeader'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @DataParsingPattern1 OR ISNULL([ErrorMessage], '') LIKE @DataParsingPattern2 OR ISNULL([ErrorMessage], '') LIKE '%DateTime%' OR ISNULL([ErrorMessage], '') LIKE '%Int32%' OR ISNULL([ErrorMessage], '') LIKE '%Decimal%' OR ISNULL([ErrorMessage], '') LIKE @DataParsingPattern3 THEN 'DataParsing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE '%SQL%' OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern1 OR ISNULL([ErrorMessage], '') LIKE '%INSERT%' OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern2 OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern3 OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern4 OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern5 THEN 'DatabaseInsert'
+                            ELSE 'Unknown'
+                        END AS [ErrorCategory]
+                    FROM [dbo].[DA_AcquisitionLog]
+                    WHERE [TaskLogId] = @TaskLogId
+                ),
+                MatchedLogs AS
+                (
+                    SELECT *
+                    FROM FilteredLogs
+                    WHERE 1 = 1
+                      AND (
+                        @Status IS NULL
+                        OR (@Status = 'Warning' AND [ErrorCategory] IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
+                      )
+                      AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
+                      AND (@HasProcessedRows = 0 OR ISNULL([ProcessedRows], 0) > 0)
+                )
+                SELECT
+                    m.[ConfigId],
+                    COALESCE(NULLIF(c.[EqName], ''), CAST(m.[ConfigId] AS NVARCHAR(20))) AS [ConfigName],
+                    COUNT(1) AS [TotalFiles],
+                    SUM(CASE WHEN m.[Status] = 'Success' THEN 1 ELSE 0 END) AS [SuccessFiles],
+                    SUM(CASE WHEN m.[ErrorCategory] IN ('FileMissing', 'PostProcessing') THEN 1 ELSE 0 END) AS [WarningFiles],
+                    SUM(CASE WHEN m.[Status] = 'Failed' AND ISNULL(m.[ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing') THEN 1 ELSE 0 END) AS [FailedFiles],
+                    SUM(ISNULL(m.[ProcessedRows], 0)) AS [ProcessedRows]
+                FROM MatchedLogs m
+                LEFT JOIN [dbo].[DA_AcquisitionConfig] c ON c.[Id] = m.[ConfigId]
+                GROUP BY m.[ConfigId], c.[EqName]
+                ORDER BY MAX(m.[StartTime]) DESC, m.[ConfigId] DESC
+                OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 10 : pageSize;
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                var result = await conn.QueryAsync<AcquisitionLogConfigGroup>(
+                    new CommandDefinition(
+                        sql,
+                        BuildDetailQueryParams(taskLogId, status, errorCategory, (safePageNo - 1) * safePageSize, safePageSize, hasProcessedRows),
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<AcquisitionLogConfigGroup>();
+            }
+        }
+
+        public async Task<int> GetLogConfigGroupsCountByTaskLogIdAsync(string taskLogId, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            const string sql = @"
+                WITH FilteredLogs AS
+                (
+                    SELECT
+                        [ConfigId],
+                        [ProcessedRows],
+                        [Status],
+                        [ErrorMessage],
+                        CASE
+                            WHEN [Status] = 'Success' THEN NULL
+                            WHEN ISNULL([ErrorMessage], '') LIKE @PostProcessingPattern THEN 'PostProcessing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @FileMissingPattern1 OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern2 OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern3 OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern4 THEN 'FileMissing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern1 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern2 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern3 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern4 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern5 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern6 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern7 THEN 'PathCredential'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @PermissionLockedPattern1 OR ISNULL([ErrorMessage], '') LIKE @PermissionLockedPattern2 OR ISNULL([ErrorMessage], '') LIKE @PermissionLockedPattern3 OR ISNULL([ErrorMessage], '') LIKE '%Access denied%' THEN 'PermissionLocked'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern1 OR ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern2 OR ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern3 OR ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern4 OR ISNULL([ErrorMessage], '') LIKE '%Sheet%' THEN 'FormatHeader'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @DataParsingPattern1 OR ISNULL([ErrorMessage], '') LIKE @DataParsingPattern2 OR ISNULL([ErrorMessage], '') LIKE '%DateTime%' OR ISNULL([ErrorMessage], '') LIKE '%Int32%' OR ISNULL([ErrorMessage], '') LIKE '%Decimal%' OR ISNULL([ErrorMessage], '') LIKE @DataParsingPattern3 THEN 'DataParsing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE '%SQL%' OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern1 OR ISNULL([ErrorMessage], '') LIKE '%INSERT%' OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern2 OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern3 OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern4 OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern5 THEN 'DatabaseInsert'
+                            ELSE 'Unknown'
+                        END AS [ErrorCategory]
+                    FROM [dbo].[DA_AcquisitionLog]
+                    WHERE [TaskLogId] = @TaskLogId
+                ),
+                MatchedLogs AS
+                (
+                    SELECT *
+                    FROM FilteredLogs
+                    WHERE 1 = 1
+                      AND (
+                        @Status IS NULL
+                        OR (@Status = 'Warning' AND [ErrorCategory] IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
+                      )
+                      AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
+                      AND (@HasProcessedRows = 0 OR ISNULL([ProcessedRows], 0) > 0)
+                )
+                SELECT COUNT(1)
+                FROM
+                (
+                    SELECT [ConfigId]
+                    FROM MatchedLogs
+                    GROUP BY [ConfigId]
+                ) t;";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                return await conn.ExecuteScalarAsync<int>(
+                    new CommandDefinition(
+                        sql,
+                        BuildDetailQueryParams(taskLogId, status, errorCategory, hasProcessedRows: hasProcessedRows),
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+            }
+        }
+
+        public async Task<List<AcquisitionLogEntry>> GetLatestLogsByTaskLogIdAndConfigIdsAsync(string taskLogId, IEnumerable<int> configIds, int takePerConfig = 10, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            var ids = (configIds ?? Enumerable.Empty<int>())
+                .Where(x => x > 0)
+                .Distinct()
+                .ToArray();
+
+            if (ids.Length == 0)
+            {
+                return new List<AcquisitionLogEntry>();
+            }
+
+            const string sql = @"
+                WITH FilteredLogs AS
+                (
+                    SELECT
+                        CAST([Id] AS NVARCHAR(50)) AS [Id],
+                        CAST([TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
+                        [ConfigId],
+                        [FileName],
+                        [FullFilePath],
+                        [StartRow],
+                        [ProcessedRows],
+                        [StartTime],
+                        [EndTime],
+                        [Status],
+                        [ErrorMessage],
+                        CASE
+                            WHEN [Status] = 'Success' THEN NULL
+                            WHEN ISNULL([ErrorMessage], '') LIKE @PostProcessingPattern THEN 'PostProcessing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @FileMissingPattern1 OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern2 OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern3 OR ISNULL([ErrorMessage], '') LIKE @FileMissingPattern4 THEN 'FileMissing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern1 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern2 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern3 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern4 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern5 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern6 OR ISNULL([ErrorMessage], '') LIKE @PathCredentialPattern7 THEN 'PathCredential'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @PermissionLockedPattern1 OR ISNULL([ErrorMessage], '') LIKE @PermissionLockedPattern2 OR ISNULL([ErrorMessage], '') LIKE @PermissionLockedPattern3 OR ISNULL([ErrorMessage], '') LIKE '%Access denied%' THEN 'PermissionLocked'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern1 OR ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern2 OR ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern3 OR ISNULL([ErrorMessage], '') LIKE @FormatHeaderPattern4 OR ISNULL([ErrorMessage], '') LIKE '%Sheet%' THEN 'FormatHeader'
+                            WHEN ISNULL([ErrorMessage], '') LIKE @DataParsingPattern1 OR ISNULL([ErrorMessage], '') LIKE @DataParsingPattern2 OR ISNULL([ErrorMessage], '') LIKE '%DateTime%' OR ISNULL([ErrorMessage], '') LIKE '%Int32%' OR ISNULL([ErrorMessage], '') LIKE '%Decimal%' OR ISNULL([ErrorMessage], '') LIKE @DataParsingPattern3 THEN 'DataParsing'
+                            WHEN ISNULL([ErrorMessage], '') LIKE '%SQL%' OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern1 OR ISNULL([ErrorMessage], '') LIKE '%INSERT%' OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern2 OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern3 OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern4 OR ISNULL([ErrorMessage], '') LIKE @DatabaseInsertPattern5 THEN 'DatabaseInsert'
+                            ELSE 'Unknown'
+                        END AS [ErrorCategory]
+                    FROM [dbo].[DA_AcquisitionLog]
+                    WHERE [TaskLogId] = @TaskLogId
+                      AND [ConfigId] IN @ConfigIds
+                ),
+                MatchedLogs AS
+                (
+                    SELECT *
+                    FROM FilteredLogs
+                    WHERE 1 = 1
+                      AND (
+                        @Status IS NULL
+                        OR (@Status = 'Warning' AND [ErrorCategory] IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
+                      )
+                      AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
+                      AND (@HasProcessedRows = 0 OR ISNULL([ProcessedRows], 0) > 0)
+                ),
+                RankedLogs AS
+                (
+                    SELECT
+                        *,
+                        ROW_NUMBER() OVER (PARTITION BY [ConfigId] ORDER BY [StartTime] DESC, [Id] DESC) AS [RowNo]
+                    FROM MatchedLogs
+                )
+                SELECT
+                    [Id],
+                    [TaskLogId],
+                    [ConfigId],
+                    [FileName],
+                    [FullFilePath],
+                    [StartRow],
+                    [ProcessedRows],
+                    [StartTime],
+                    [EndTime],
+                    [Status],
+                    [ErrorMessage]
+                FROM RankedLogs
+                WHERE [RowNo] <= @TakePerConfig
+                ORDER BY [ConfigId], [StartTime] DESC, [Id] DESC;";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                var args = BuildDetailQueryParams(taskLogId, status, errorCategory, hasProcessedRows: hasProcessedRows);
+                var parameters = new DynamicParameters(args);
+                parameters.Add("ConfigIds", ids);
+                parameters.Add("TakePerConfig", takePerConfig <= 0 ? 10 : takePerConfig);
+
+                var result = await conn.QueryAsync<AcquisitionLogEntry>(
+                    new CommandDefinition(
+                        sql,
+                        parameters,
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<AcquisitionLogEntry>();
+            }
+        }
+
+        public async Task<List<AcquisitionLogConfigTaskGroup>> GetLogConfigHistoryTaskGroupsAsync(int configId, DateTime? startTime, DateTime? endTime, int pageNo, int pageSize, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            const string sql = @"
+                WITH FilteredLogs AS
+                (
+                    SELECT
+                        CAST(l.[TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
+                        l.[ProcessedRows],
+                        l.[StartTime],
+                        l.[EndTime],
+                        l.[Status],
+                        l.[ErrorMessage],
+                        CASE
+                            WHEN l.[Status] = 'Success' THEN NULL
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PostProcessingPattern THEN 'PostProcessing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern4 THEN 'FileMissing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern4 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern5 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern6 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern7 THEN 'PathCredential'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PermissionLockedPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @PermissionLockedPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @PermissionLockedPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE '%Access denied%' THEN 'PermissionLocked'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern4 OR ISNULL(l.[ErrorMessage], '') LIKE '%Sheet%' THEN 'FormatHeader'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @DataParsingPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @DataParsingPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE '%DateTime%' OR ISNULL(l.[ErrorMessage], '') LIKE '%Int32%' OR ISNULL(l.[ErrorMessage], '') LIKE '%Decimal%' OR ISNULL(l.[ErrorMessage], '') LIKE @DataParsingPattern3 THEN 'DataParsing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE '%SQL%' OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE '%INSERT%' OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern4 OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern5 THEN 'DatabaseInsert'
+                            ELSE 'Unknown'
+                        END AS [ErrorCategory]
+                    FROM [dbo].[DA_AcquisitionLog] l
+                    WHERE l.[ConfigId] = @ConfigId
+                      AND (@StartTime IS NULL OR l.[StartTime] >= @StartTime)
+                      AND (@EndTime IS NULL OR l.[StartTime] < @EndTime)
+                ),
+                MatchedLogs AS
+                (
+                    SELECT *
+                    FROM FilteredLogs
+                    WHERE 1 = 1
+                      AND (
+                        @Status IS NULL
+                        OR (@Status = 'Warning' AND [ErrorCategory] IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
+                      )
+                      AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
+                      AND (@HasProcessedRows = 0 OR ISNULL([ProcessedRows], 0) > 0)
+                )
+                SELECT
+                    m.[TaskLogId],
+                    COALESCE(NULLIF(MAX(t.[TaskCode]), ''), m.[TaskLogId]) AS [TaskCode],
+                    MAX(t.[TriggerType]) AS [TriggerType],
+                    MAX(t.[Status]) AS [TaskStatus],
+                    COALESCE(MAX(t.[StartTime]), MIN(m.[StartTime])) AS [StartTime],
+                    COALESCE(MAX(t.[EndTime]), MAX(m.[EndTime])) AS [EndTime],
+                    COUNT(1) AS [TotalFiles],
+                    SUM(CASE WHEN m.[Status] = 'Success' THEN 1 ELSE 0 END) AS [SuccessFiles],
+                    SUM(CASE WHEN m.[ErrorCategory] IN ('FileMissing', 'PostProcessing') THEN 1 ELSE 0 END) AS [WarningFiles],
+                    SUM(CASE WHEN m.[Status] = 'Failed' AND ISNULL(m.[ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing') THEN 1 ELSE 0 END) AS [FailedFiles],
+                    SUM(ISNULL(m.[ProcessedRows], 0)) AS [ProcessedRows]
+                FROM MatchedLogs m
+                LEFT JOIN [dbo].[DA_AcquisitionTaskLog] t ON CAST(t.[Id] AS NVARCHAR(50)) = m.[TaskLogId]
+                GROUP BY m.[TaskLogId]
+                ORDER BY COALESCE(MAX(t.[StartTime]), MAX(m.[StartTime])) DESC, m.[TaskLogId] DESC
+                OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 10 : pageSize;
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                var parameters = new DynamicParameters(BuildDetailQueryParams(null, status, errorCategory, (safePageNo - 1) * safePageSize, safePageSize, hasProcessedRows));
+                parameters.Add("ConfigId", configId);
+                parameters.Add("StartTime", startTime);
+                parameters.Add("EndTime", endTime);
+
+                var result = await conn.QueryAsync<AcquisitionLogConfigTaskGroup>(
+                    new CommandDefinition(sql, parameters, cancellationToken: ct)).ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<AcquisitionLogConfigTaskGroup>();
+            }
+        }
+
+        public async Task<int> GetLogConfigHistoryTaskGroupsCountAsync(int configId, DateTime? startTime, DateTime? endTime, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            const string sql = @"
+                WITH FilteredLogs AS
+                (
+                    SELECT
+                        CAST(l.[TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
+                        l.[ProcessedRows],
+                        l.[Status],
+                        l.[ErrorMessage],
+                        CASE
+                            WHEN l.[Status] = 'Success' THEN NULL
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PostProcessingPattern THEN 'PostProcessing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern4 THEN 'FileMissing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern4 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern5 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern6 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern7 THEN 'PathCredential'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PermissionLockedPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @PermissionLockedPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @PermissionLockedPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE '%Access denied%' THEN 'PermissionLocked'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern4 OR ISNULL(l.[ErrorMessage], '') LIKE '%Sheet%' THEN 'FormatHeader'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @DataParsingPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @DataParsingPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE '%DateTime%' OR ISNULL(l.[ErrorMessage], '') LIKE '%Int32%' OR ISNULL(l.[ErrorMessage], '') LIKE '%Decimal%' OR ISNULL(l.[ErrorMessage], '') LIKE @DataParsingPattern3 THEN 'DataParsing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE '%SQL%' OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE '%INSERT%' OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern4 OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern5 THEN 'DatabaseInsert'
+                            ELSE 'Unknown'
+                        END AS [ErrorCategory]
+                    FROM [dbo].[DA_AcquisitionLog] l
+                    WHERE l.[ConfigId] = @ConfigId
+                      AND (@StartTime IS NULL OR l.[StartTime] >= @StartTime)
+                      AND (@EndTime IS NULL OR l.[StartTime] < @EndTime)
+                ),
+                MatchedLogs AS
+                (
+                    SELECT *
+                    FROM FilteredLogs
+                    WHERE 1 = 1
+                      AND (
+                        @Status IS NULL
+                        OR (@Status = 'Warning' AND [ErrorCategory] IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
+                      )
+                      AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
+                      AND (@HasProcessedRows = 0 OR ISNULL([ProcessedRows], 0) > 0)
+                )
+                SELECT COUNT(1)
+                FROM
+                (
+                    SELECT [TaskLogId]
+                    FROM MatchedLogs
+                    GROUP BY [TaskLogId]
+                ) t;";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                var parameters = new DynamicParameters(BuildDetailQueryParams(null, status, errorCategory, hasProcessedRows: hasProcessedRows));
+                parameters.Add("ConfigId", configId);
+                parameters.Add("StartTime", startTime);
+                parameters.Add("EndTime", endTime);
+
+                return await conn.ExecuteScalarAsync<int>(
+                    new CommandDefinition(sql, parameters, cancellationToken: ct)).ConfigureAwait(false);
+            }
+        }
+
+        public async Task<List<AcquisitionLogEntry>> GetLatestLogsByConfigIdAndTaskLogIdsAsync(int configId, IEnumerable<string> taskLogIds, int takePerTask = 10, DateTime? startTime = null, DateTime? endTime = null, string status = null, string errorCategory = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            var ids = (taskLogIds ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (ids.Length == 0)
+            {
+                return new List<AcquisitionLogEntry>();
+            }
+
+            const string sql = @"
+                WITH FilteredLogs AS
+                (
+                    SELECT
+                        CAST(l.[Id] AS NVARCHAR(50)) AS [Id],
+                        CAST(l.[TaskLogId] AS NVARCHAR(50)) AS [TaskLogId],
+                        l.[ConfigId],
+                        l.[FileName],
+                        l.[FullFilePath],
+                        l.[StartRow],
+                        l.[ProcessedRows],
+                        l.[StartTime],
+                        l.[EndTime],
+                        l.[Status],
+                        l.[ErrorMessage],
+                        CASE
+                            WHEN l.[Status] = 'Success' THEN NULL
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PostProcessingPattern THEN 'PostProcessing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern4 THEN 'FileMissing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern4 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern5 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern6 OR ISNULL(l.[ErrorMessage], '') LIKE @PathCredentialPattern7 THEN 'PathCredential'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PermissionLockedPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @PermissionLockedPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @PermissionLockedPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE '%Access denied%' THEN 'PermissionLocked'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @FormatHeaderPattern4 OR ISNULL(l.[ErrorMessage], '') LIKE '%Sheet%' THEN 'FormatHeader'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @DataParsingPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @DataParsingPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE '%DateTime%' OR ISNULL(l.[ErrorMessage], '') LIKE '%Int32%' OR ISNULL(l.[ErrorMessage], '') LIKE '%Decimal%' OR ISNULL(l.[ErrorMessage], '') LIKE @DataParsingPattern3 THEN 'DataParsing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE '%SQL%' OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE '%INSERT%' OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern4 OR ISNULL(l.[ErrorMessage], '') LIKE @DatabaseInsertPattern5 THEN 'DatabaseInsert'
+                            ELSE 'Unknown'
+                        END AS [ErrorCategory]
+                    FROM [dbo].[DA_AcquisitionLog] l
+                    WHERE l.[ConfigId] = @ConfigId
+                      AND CAST(l.[TaskLogId] AS NVARCHAR(50)) IN @TaskLogIds
+                      AND (@StartTime IS NULL OR l.[StartTime] >= @StartTime)
+                      AND (@EndTime IS NULL OR l.[StartTime] < @EndTime)
+                ),
+                MatchedLogs AS
+                (
+                    SELECT *
+                    FROM FilteredLogs
+                    WHERE 1 = 1
+                      AND (
+                        @Status IS NULL
+                        OR (@Status = 'Warning' AND [ErrorCategory] IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status = 'Failed' AND [Status] = 'Failed' AND ISNULL([ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing'))
+                        OR (@Status NOT IN ('Warning', 'Failed') AND [Status] = @Status)
+                      )
+                      AND (@ErrorCategory IS NULL OR [ErrorCategory] = @ErrorCategory)
+                      AND (@HasProcessedRows = 0 OR ISNULL([ProcessedRows], 0) > 0)
+                ),
+                RankedLogs AS
+                (
+                    SELECT
+                        *,
+                        ROW_NUMBER() OVER (PARTITION BY [TaskLogId] ORDER BY [StartTime] DESC, [Id] DESC) AS [RowNo]
+                    FROM MatchedLogs
+                )
+                SELECT
+                    [Id],
+                    [TaskLogId],
+                    [ConfigId],
+                    [FileName],
+                    [FullFilePath],
+                    [StartRow],
+                    [ProcessedRows],
+                    [StartTime],
+                    [EndTime],
+                    [Status],
+                    [ErrorMessage]
+                FROM RankedLogs
+                WHERE [RowNo] <= @TakePerTask
+                ORDER BY [TaskLogId], [StartTime] DESC, [Id] DESC;";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                var parameters = new DynamicParameters(BuildDetailQueryParams(null, status, errorCategory, hasProcessedRows: hasProcessedRows));
+                parameters.Add("ConfigId", configId);
+                parameters.Add("TaskLogIds", ids);
+                parameters.Add("TakePerTask", takePerTask <= 0 ? 10 : takePerTask);
+                parameters.Add("StartTime", startTime);
+                parameters.Add("EndTime", endTime);
+
+                var result = await conn.QueryAsync<AcquisitionLogEntry>(
+                    new CommandDefinition(sql, parameters, cancellationToken: ct)).ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<AcquisitionLogEntry>();
+            }
+        }
+
+        public async Task<List<AcquisitionLogConfigHistorySummary>> GetLogConfigHistorySummariesAsync(IEnumerable<int> configIds, DateTime? startTime = null, DateTime? endTime = null, CancellationToken ct = default)
+        {
+            var ids = (configIds ?? Enumerable.Empty<int>())
+                .Where(x => x > 0)
+                .Distinct()
+                .ToArray();
+
+            if (ids.Length == 0)
+            {
+                return new List<AcquisitionLogConfigHistorySummary>();
+            }
+
+            const string sql = @"
+                WITH CategorizedLogs AS
+                (
+                    SELECT
+                        l.[ConfigId],
+                        l.[ProcessedRows],
+                        l.[Status],
+                        CASE
+                            WHEN l.[Status] = 'Success' THEN NULL
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @PostProcessingPattern THEN 'PostProcessing'
+                            WHEN ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern1 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern2 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern3 OR ISNULL(l.[ErrorMessage], '') LIKE @FileMissingPattern4 THEN 'FileMissing'
+                            ELSE 'Unknown'
+                        END AS [ErrorCategory]
+                    FROM [dbo].[DA_AcquisitionLog] l
+                    WHERE l.[ConfigId] IN @ConfigIds
+                      AND (@StartTime IS NULL OR l.[StartTime] >= @StartTime)
+                      AND (@EndTime IS NULL OR l.[StartTime] < @EndTime)
+                )
+                SELECT
+                    [ConfigId],
+                    COUNT(1) AS [TotalFiles],
+                    SUM(CASE WHEN [Status] = 'Success' THEN 1 ELSE 0 END) AS [SuccessFiles],
+                    SUM(CASE WHEN [ErrorCategory] IN ('FileMissing', 'PostProcessing') THEN 1 ELSE 0 END) AS [WarningFiles],
+                    SUM(CASE WHEN [Status] = 'Failed' AND ISNULL([ErrorCategory], '') NOT IN ('FileMissing', 'PostProcessing') THEN 1 ELSE 0 END) AS [FailedFiles],
+                    SUM(ISNULL([ProcessedRows], 0)) AS [ProcessedRows]
+                FROM CategorizedLogs
+                GROUP BY [ConfigId];";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+
+                var parameters = new DynamicParameters(BuildDetailQueryParams(null, null, null));
+                parameters.Add("ConfigIds", ids);
+                parameters.Add("StartTime", startTime);
+                parameters.Add("EndTime", endTime);
+
+                var result = await conn.QueryAsync<AcquisitionLogConfigHistorySummary>(
+                    new CommandDefinition(sql, parameters, cancellationToken: ct)).ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<AcquisitionLogConfigHistorySummary>();
+            }
+        }
+
         public async Task<int> GetLogsProcessedRowsByTaskLogIdAsync(string taskLogId, CancellationToken ct = default)
         {
             const string sql = @"
@@ -602,17 +1128,20 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             return supported.FirstOrDefault(x => x.Equals(normalized, StringComparison.OrdinalIgnoreCase));
         }
 
-        private static object BuildDetailQueryParams(string taskLogId, string status, string errorCategory, int? offset = null, int? pageSize = null)
+        private static object BuildDetailQueryParams(string taskLogId, string status, string errorCategory, int? offset = null, int? pageSize = null, bool hasProcessedRows = false)
         {
             return new
             {
                 TaskLogId = taskLogId,
                 Status = NormalizeDetailStatus(status),
                 ErrorCategory = NormalizeErrorCategory(errorCategory),
+                HasProcessedRows = hasProcessedRows,
                 MissingFilePattern = "%\u6587\u4ef6\u672a\u627e\u5230%",
                 FileMissingPattern1 = "%\u6587\u4ef6\u672a\u627e\u5230%",
                 FileMissingPattern2 = "%\u4e0d\u5b58\u5728%",
                 FileMissingPattern3 = "%\u672a\u627e\u5230\u53ef\u5904\u7406\u6587\u4ef6%",
+                FileMissingPattern4 = "%File not found%",
+                PostProcessingPattern = "%Post processing failed%",
                 PathCredentialPattern1 = "%SMB \u51ed\u636e%",
                 PathCredentialPattern2 = "%\u51ed\u636e%",
                 PathCredentialPattern3 = "%\u7528\u6237\u540d%",
@@ -748,6 +1277,148 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
             }
         }
 
+        public async Task<List<AcquisitionFileState>> GetPagedByConfigAndDateRangeAsync(int configId, DateTime startDate, DateTime endDate, int pageNo, int pageSize, string status = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT
+                    [Id],
+                    [ConfigId],
+                    [BusinessDate],
+                    [FileName],
+                    [FullPath],
+                    [DataRowCount],
+                    [LastStartRow],
+                    [LastProcessedRows],
+                    [LastTaskLogId],
+                    [LastStatus],
+                    [LastUpdateSource],
+                    [IsSealed],
+                    [SealTime],
+                    [LastScanTime],
+                    [LastWriteTime],
+                    [LastWriteTimeUtc],
+                    [FileSize],
+                    [CreateTime],
+                    [UpdateTime]
+                FROM [dbo].[DA_AcquisitionFileState]
+                WHERE [ConfigId] = @ConfigId
+                  AND [BusinessDate] >= @StartDate
+                  AND [BusinessDate] <= @EndDate
+                  AND (@Status IS NULL OR [LastStatus] = @Status)
+                  AND (@HasProcessedRows = 0 OR ISNULL([LastProcessedRows], 0) > 0)
+                ORDER BY [BusinessDate] DESC, [UpdateTime] DESC, [Id] DESC
+                OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                var result = await conn.QueryAsync<AcquisitionFileState>(
+                    new CommandDefinition(
+                        sql,
+                        BuildFileStateParams(configId, startDate, endDate, pageNo, pageSize, status, hasProcessedRows),
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<AcquisitionFileState>();
+            }
+        }
+
+        public async Task<int> GetCountByConfigAndDateRangeAsync(int configId, DateTime startDate, DateTime endDate, string status = null, bool hasProcessedRows = false, CancellationToken ct = default)
+        {
+            const string sql = @"
+                SELECT COUNT(1)
+                FROM [dbo].[DA_AcquisitionFileState]
+                WHERE [ConfigId] = @ConfigId
+                  AND [BusinessDate] >= @StartDate
+                  AND [BusinessDate] <= @EndDate
+                  AND (@Status IS NULL OR [LastStatus] = @Status)
+                  AND (@HasProcessedRows = 0 OR ISNULL([LastProcessedRows], 0) > 0);";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                return await conn.ExecuteScalarAsync<int>(
+                    new CommandDefinition(
+                        sql,
+                        BuildFileStateParams(configId, startDate, endDate, 1, 10, status, hasProcessedRows),
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+            }
+        }
+
+        public async Task<List<AcquisitionFileStateSummary>> GetSummaryByConfigIdsAsync(IEnumerable<int> configIds, DateTime startDate, DateTime endDate, CancellationToken ct = default)
+        {
+            var ids = (configIds ?? Enumerable.Empty<int>())
+                .Where(x => x > 0)
+                .Distinct()
+                .ToArray();
+
+            if (ids.Length == 0)
+            {
+                return new List<AcquisitionFileStateSummary>();
+            }
+
+            const string sql = @"
+                SELECT
+                    [ConfigId],
+                    COUNT(1) AS [TotalFiles],
+                    SUM(CASE WHEN [LastStatus] = 'Success' THEN 1 ELSE 0 END) AS [SuccessFiles],
+                    SUM(CASE WHEN [LastStatus] = 'Failed' THEN 1 ELSE 0 END) AS [FailedFiles],
+                    SUM(ISNULL([LastProcessedRows], 0)) AS [ProcessedRows],
+                    SUM(CASE WHEN ISNULL([LastProcessedRows], 0) > 0 THEN 1 ELSE 0 END) AS [NewFiles]
+                FROM [dbo].[DA_AcquisitionFileState]
+                WHERE [ConfigId] IN @ConfigIds
+                  AND [BusinessDate] >= @StartDate
+                  AND [BusinessDate] <= @EndDate
+                GROUP BY [ConfigId];";
+
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                await conn.OpenAsync(ct).ConfigureAwait(false);
+                var result = await conn.QueryAsync<AcquisitionFileStateSummary>(
+                    new CommandDefinition(
+                        sql,
+                        new
+                        {
+                            ConfigIds = ids,
+                            StartDate = startDate.Date,
+                            EndDate = endDate.Date
+                        },
+                        cancellationToken: ct
+                    )).ConfigureAwait(false);
+
+                return result?.ToList() ?? new List<AcquisitionFileStateSummary>();
+            }
+        }
+
+        private static string NormalizeFileStateStatus(string status)
+        {
+            if (string.IsNullOrWhiteSpace(status)) return null;
+
+            string normalized = status.Trim();
+            if (normalized.Equals("All", StringComparison.OrdinalIgnoreCase)) return null;
+            if (normalized.Equals("Success", StringComparison.OrdinalIgnoreCase)) return "Success";
+            if (normalized.Equals("Failed", StringComparison.OrdinalIgnoreCase)) return "Failed";
+
+            return null;
+        }
+
+        private static object BuildFileStateParams(int configId, DateTime startDate, DateTime endDate, int pageNo, int pageSize, string status, bool hasProcessedRows)
+        {
+            int safePageNo = pageNo <= 0 ? 1 : pageNo;
+            int safePageSize = pageSize <= 0 ? 10 : pageSize;
+
+            return new
+            {
+                ConfigId = configId,
+                StartDate = startDate.Date,
+                EndDate = endDate.Date,
+                Status = NormalizeFileStateStatus(status),
+                HasProcessedRows = hasProcessedRows,
+                Offset = (safePageNo - 1) * safePageSize,
+                PageSize = safePageSize
+            };
+        }
         public async Task<bool> UpsertSuccessAsync(AcquisitionFileState state, bool allowSealedUpdate, CancellationToken ct = default)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
@@ -891,3 +1562,4 @@ namespace DT_DataAcquisitionSystem.Infrastructure.Repositories
 
     }
 }
+

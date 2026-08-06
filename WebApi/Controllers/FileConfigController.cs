@@ -1,10 +1,14 @@
 using DT_DataAcquisitionSystem.Domain.Entities;
 using DT_DataAcquisitionSystem.Application.Services;
 using DT_DataAcquisitionSystem.Common.Extensions;
+using DT_DataAcquisitionSystem.Common.Utilities;
 using Nancy;
 using Nancy.ModelBinding;
+using Newtonsoft.Json;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
 
 
 namespace Learun.Application.WebApi.Modules
@@ -23,6 +27,7 @@ namespace Learun.Application.WebApi.Modules
             Post["/"] = CreateConfig;
             Put["/{id:int}"] = UpdateConfig;
             Delete["/"] = DeleteConfigs;
+            Post["/test-filename-parsing"] = TestFileNameParsing;
 
             // 状态管理
             Get["/status"] = GetConfigStatus;
@@ -149,6 +154,72 @@ namespace Learun.Application.WebApi.Modules
         #endregion
 
         #region 2. 状态管理接口
+
+        /// <summary>
+        /// 使用正式采集解析器测试文件名规则
+        /// </summary>
+        private Response TestFileNameParsing(dynamic _)
+        {
+            if (Request?.Body == null)
+            {
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "Request body cannot be empty.", null);
+            }
+
+            if (Request.Body.CanSeek)
+            {
+                Request.Body.Seek(0, SeekOrigin.Begin);
+            }
+
+            string body;
+            using (var reader = new StreamReader(Request.Body, Encoding.UTF8, true, 1024, true))
+            {
+                body = reader.ReadToEnd();
+            }
+
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "Request body cannot be empty.", null);
+            }
+
+            FileNameParsingTestRequest request;
+            try
+            {
+                request = JsonConvert.DeserializeObject<FileNameParsingTestRequest>(body);
+            }
+            catch (JsonException ex)
+            {
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    "Invalid request JSON: " + ex.Message,
+                    null);
+            }
+            if (request == null || string.IsNullOrWhiteSpace(request.FileName))
+            {
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "FileName cannot be empty.", null);
+            }
+
+            if (request.FilenameParsing == null)
+            {
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.fail, "FilenameParsing cannot be empty.", null);
+            }
+
+            try
+            {
+                var result = FileNameParserIocHelper.Parse(
+                    request.FileName,
+                    string.IsNullOrWhiteSpace(request.FullFilePath) ? request.FileName : request.FullFilePath,
+                    request.FilenameParsing);
+                return this.ToResponse(NancyModuleExtensions.ResponseCode.success, "File name parsed successfully.", result);
+            }
+            catch (System.Exception ex)
+            {
+                string parserName = request.FilenameParsing.ParserName ?? string.Empty;
+                return this.ToResponse(
+                    NancyModuleExtensions.ResponseCode.fail,
+                    $"Failed to parse file name '{request.FileName}' with parser '{parserName}': {ex.Message}",
+                    null);
+            }
+        }
 
         /// <summary>
         /// 获取指定配置列表的状态
